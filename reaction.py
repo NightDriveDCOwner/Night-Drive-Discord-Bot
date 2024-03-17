@@ -12,8 +12,11 @@ class Reaction(commands.Cog):
                 print(f"Nachricht von Server {message.guild.name} erhalten: Username: {message.author.name}, Userid: {message.author.id}, Content: {message.content}")
                 
                 embed = discord.Embed(title="Message send!", color=0x4169E1)
-                embed.set_author(name=message.author.name, icon_url=message.author.avatar_url)
-                embed.add_field(name="Message:", value=message.content, inline=True)
+                avatar_url = message.author.avatar.url               
+                if avatar_url is None:
+                    avatar_url = message.author.default_avatar.url                                 
+                embed.set_author(name=message.author.name, icon_url=avatar_url)               
+                embed.add_field(name="Message:", value=message.content, inline=True)              
                 embed.set_footer(text=f"ID: {message.author.id} - heute um {message.created_at.strftime('%H:%M:%S')} Uhr")
 
                 channel = message.guild.get_channel(1208770898832658493)
