@@ -49,12 +49,6 @@ class Main(commands.Bot):
             return
         await self.process_commands(message)
 
-    async def on_message_delete(self, message):
-        pass
-
-    async def on_message_edit(self, before, after):
-        pass
-
 if __name__ == "__main__":
     bot = Main()
     bot.run(bot.token)
