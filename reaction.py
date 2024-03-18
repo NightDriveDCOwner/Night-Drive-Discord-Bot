@@ -7,28 +7,29 @@ from datetime import datetime, timedelta
 class Reaction(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.user_data = {} # Initialisieren der user_data Liste
-        self.reset_timer() # Starten des Timers zum Löschen der user_data Liste nach 6 Minuten
+        self.user_data = {}
+        self.TimerMustReseted = True
+        self.reset_timer()
 
     def reset_timer(self):
-        # Löschen der user_data Liste nach 6 Minuten
         asyncio.create_task(self.clear_user_data_after_6_minutes())
 
     async def clear_user_data_after_6_minutes(self):
-        await asyncio.sleep(6 * 60) # Warten von 6 Minuten
-        self.user_data.clear() # Löschen der user_data Li
-        self.reset_timer() # Starten des Timers erneut
+        await asyncio.sleep(6 * 60)
+        self.user_data.clear()
+        self.TimerMustReseted = True
 
     @commands.Cog.listener()
     async def on_message(self, message):
         if message.guild is not None:
-            if message.channel.id != 1208770898832658493 and message.content:
-                print(f"Nachricht von Server {message.guild.name} erhalten: Username: {message.author.name}, Userid: {message.author.id}, Content: {message.content}")
+            if message.channel.id != 1208770898832658493 and message.content:                
                 
-                embed = discord.Embed(title="Message send!", color=0x4169E1)
-                avatar_url = message.author.avatar.url               
+                avatar_url = message.author.avatar.url
                 if avatar_url is None:
-                    avatar_url = message.author.default_avatar.url                                 
+                    avatar_url = message.author.default_avatar.url
+
+                print(f"Nachricht von Server {message.guild.name} erhalten: Channel: {message.channel.name}, Username: {message.author.name}, Userid: {message.author.id}, Content: {message.content}")                
+                embed = discord.Embed(title=f"Message send in <#{message.channel.id}>!", color=0x4169E1)                                                                
                 embed.set_author(name=message.author.name, icon_url=avatar_url)               
                 embed.add_field(name="Message:", value=message.content, inline=True)              
                 embed.set_footer(text=f"ID: {message.author.id} - heute um {message.created_at.strftime('%H:%M:%S')} Uhr")
@@ -39,27 +40,30 @@ class Reaction(commands.Cog):
     @commands.Cog.listener()
     async def on_message_delete(self, message):
         def add_user(user_id, number):
-            self.user_data[user_id] = number          
+            self.user_data[user_id] = number                  
         try:
             if message.guild is not None and message.channel.id != 1208770898832658493 and message.content:                               
-                    async for entry in message.guild.audit_logs(limit=5, action=discord.AuditLogAction.message_delete, after=datetime.now() - timedelta(minutes=65)):                    
-                        two_minutes_ago = str(datetime.now() - timedelta(minutes=60,seconds=-35))                                   
-                        EntryTime = str(entry.created_at)
-                        if entry.user_id in self.user_data:
-                            if entry.extra.count > self.user_data[entry.user_id]:
+                    DeletedbyAdmin = False
+                    async for entry in message.guild.audit_logs(limit=5, action=discord.AuditLogAction.message_delete, after=datetime.now() - timedelta(minutes=5)):                                            
+                        if entry.extra.count is not None:
+                            if self.TimerMustReseted:
+                                self.reset_timer()
+                                self.TimerMustReseted = False
+                            if entry.user_id in self.user_data:
+                                if entry.extra.count > self.user_data[entry.user_id]:
+                                    self.user_data[entry.user_id] = entry.extra.count
+                                    DeletedbyAdmin = True
+                                    break
+                                else: 
+                                    DeletedbyAdmin = False                        
+                                    break
+                            else:
                                 self.user_data[entry.user_id] = entry.extra.count
                                 DeletedbyAdmin = True
-                                break
-                            else:
-                                DeletedbyAdmin = False
+                                break  
                         else:
-                            if entry.extra.count > 0 and entry.extra.count is not None:
-                                self.user_data[entry.user_id] = entry.extra.count
-                                DeletedbyAdmin = True
-                                print(f"Der {entry.user} wurde zur Liste hinzugefügt.")
-                                break
-                            else:
-                                DeletedbyAdmin = False                                
+                            DeletedbyAdmin = False                                
+                            break
 
                     if DeletedbyAdmin:
                         deleted_by = entry.user
@@ -72,33 +76,38 @@ class Reaction(commands.Cog):
                     avatar_url = message.author.avatar.url               
                     if avatar_url is None:
                         avatar_url = message.author.default_avatar.url
+
+                    current_datetime = datetime.now()
                     
-                    print(f"Nachricht von Server {message.guild.name} deleted : Username: {message.author.name}, Userid: {message.author.id}, Content: {message.content}, Message deleted by: {deleted_by_name}, User ID: {str(deleted_by_id)}")                                  
-                    embed = discord.Embed(title="Message deleted!", color=0xFF0000)                                                 
+                    print(f"Nachricht von Server {message.guild.name} deleted: Channel: {message.channel.name}. Username: {message.author.name}, Userid: {message.author.id}, Content: {message.content}, Message deleted by: {deleted_by_name}, User ID: {str(deleted_by_id)}")                                  
+                    embed = discord.Embed(title=f"Message deleted in <#{message.channel.id}>!", color=0xFF0000)                                                 
                     embed.set_author(name=message.author.name, icon_url=avatar_url)               
                     embed.add_field(name="Message:", value=message.content, inline=False)              
                     embed.add_field(name="Deleted by:", value=f"{deleted_by_name} - {str(deleted_by_id)}", inline=False)
-                    embed.set_footer(text=f"ID: {message.author.id} - heute um {message.created_at.strftime('%H:%M:%S')} Uhr")
+                    embed.set_footer(text=f"ID: {message.author.id} - heute um {current_datetime.time().strftime('%H:%M:%S')} Uhr")
 
                     channel = message.guild.get_channel(1208770898832658493)
                     await channel.send(embed=embed)
-        except discord.HTTPException as e:
+        except Exception as e:
             print(f"Error fetching audit logs: {e}")                
 
     @commands.Cog.listener()
     async def on_message_edit(self, before, after):
         if before.guild is not None:
-            if before.channel.id != 1208770898832658493 and before.content:
-                print(f"Nachricht von Server {before.guild.name} edited: Username: {before.author.name}, Userid: {before.author.id}, Content before: {before.content}, Content after: {after.content}")
+            if before.channel.id != 1208770898832658493 and before.content:                          
                 
-                embed = discord.Embed(title="Message edited!", color=0xFFA500)
                 avatar_url = before.author.avatar.url               
                 if avatar_url is None:
                     avatar_url = before.author.default_avatar.url                                 
-                embed.set_author(name=before.author.name, icon_url=avatar_url)               
+                
+                current_datetime = datetime.now()
+
+                print(f"Nachricht von Server {before.guild.name} edited: Channel {after.channel.name}, Username: {before.author.name}, Userid: {before.author.id}, Content before: {before.content}, Content after: {after.content}")
+                embed = discord.Embed(title=f"Message edited in <#{after.channel.id}>!", color=0xFFA500)
+                embed.set_author(name=after.author.name, icon_url=avatar_url)               
                 embed.add_field(name="Message before:", value=before.content, inline=False)              
                 embed.add_field(name="Message after:", value=after.content, inline=False)              
-                embed.set_footer(text=f"ID: {before.author.id} - heute um {before.created_at.strftime('%H:%M:%S')} Uhr")
+                embed.set_footer(text=f"ID: {before.author.id} - heute um {current_datetime.time().strftime('%H:%M:%S')} Uhr")
 
                 channel = before.guild.get_channel(1208770898832658493)
                 await channel.send(embed=embed)

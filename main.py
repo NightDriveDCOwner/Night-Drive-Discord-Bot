@@ -2,6 +2,7 @@ import discord
 from discord.ext import commands
 from join import Join
 from reaction import Reaction
+from voice import VoiceLogging
 
 class Main(commands.Bot):
     def __init__(self):
@@ -29,6 +30,7 @@ class Main(commands.Bot):
     async def add_cogs(self):
         await self.add_cog(Reaction(self))
         await self.add_cog(Join(self))
+        await self.add_cog(VoiceLogging(self))
 
 
     async def on_connect(self):
