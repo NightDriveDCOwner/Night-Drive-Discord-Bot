@@ -1,56 +1,22 @@
-import discord
-from discord.ext import commands
-from join import Join
-from reaction import Reaction
-from voice import VoiceLogging
+import disnake
+from disnake.ext import commands
+from reaction import setupReaction
+from join import setupJoin
+from voice import setupVoice
+from globalfile import setupGlobal
+from moderation import setupModeration
 
-class Main(commands.Bot):
-    def __init__(self):
-        intents = discord.Intents.default()
-        intents.members = True
-        intents.dm_messages = True        
-        intents.guilds = True        
-        intents.guild_messages = True
-        intents.moderation = True        
-        intents.message_content = True
-        intents.webhooks = True
-        intents.guild_reactions = True
-        intents.emojis_and_stickers = True
-        
-        super().__init__(command_prefix='/', intents=intents)
-        self.token = 'MTIwODE3NTc0ODk4MDkzNjc2NA.GQ_h32.sARzEmzKbn5K0r_wmSdY0cXTyZEBXCkyzmS8ro'
-        self.status = discord.Status.online
-        self.activity = discord.Game(name='test')        
+intents = disnake.Intents.all()
+bot = commands.Bot(intents=intents)
 
-    async def on_ready(self):
-        print(f'Logged in as {self.user}')
-        await self.change_presence(status=self.status, activity=self.activity)
-        await self.add_cogs()
+@bot.event
+async def on_ready():
+    print("The bot is ready!")  
+   
+bot.load_extension("commands")
+setupReaction(bot)
+setupJoin(bot)
+setupVoice(bot)
+setupGlobal(bot)
 
-    async def add_cogs(self):
-        await self.add_cog(Reaction(self))
-        await self.add_cog(Join(self))
-        await self.add_cog(VoiceLogging(self))
-
-
-    async def on_connect(self):
-        print('Bot is connected.')
-
-    async def on_disconnect(self):
-        print('Bot is disconnected.')
-
-    async def on_error(self, event, *args, **kwargs):
-        print('An error occurred:', event)
-
-    async def on_command_error(self, ctx, error):
-        if isinstance(error, commands.CommandNotFound):
-            await ctx.send('Unknown command.')
-
-    async def on_message(self, message):
-        if message.author == self.user:
-            return
-        await self.process_commands(message)
-
-if __name__ == "__main__":
-    bot = Main()
-    bot.run(bot.token)
+bot.run("MTIwODE3NTc0ODk4MDkzNjc2NA.GGk_8k.IUe5KR-MSpolnO_I7rGtx5qsE1Tr0M9fyk7gfw")

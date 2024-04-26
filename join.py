@@ -1,8 +1,8 @@
-import discord
-from discord.ext import commands
+import disnake
+from disnake.ext import commands
 
 class Join(commands.Cog):
-    def __init__(self, bot):
+    def __init__(self, bot: commands.Bot):
         self.bot = bot
 
     @commands.Cog.listener()
@@ -17,12 +17,12 @@ class Join(commands.Cog):
 
             guild = member.guild
 
-            frischling = discord.utils.get(guild.roles, id=frischling_id)
-            info = discord.utils.get(guild.roles, id=info_id)
-            hobbies = discord.utils.get(guild.roles, id=hobbies_id)
-            games = discord.utils.get(guild.roles, id=games_id)
-            other = discord.utils.get(guild.roles, id=other_id)
-            verify = discord.utils.get(guild.roles, id=verify_id)
+            frischling = disnake.utils.get(guild.roles, id=frischling_id)
+            info = disnake.utils.get(guild.roles, id=info_id)
+            hobbies = disnake.utils.get(guild.roles, id=hobbies_id)
+            games = disnake.utils.get(guild.roles, id=games_id)
+            other = disnake.utils.get(guild.roles, id=other_id)
+            verify = disnake.utils.get(guild.roles, id=verify_id)
 
             await member.add_roles(frischling, info, hobbies, games, other, verify)
 
@@ -30,5 +30,5 @@ class Join(commands.Cog):
         except Exception as e:
             print(f"Fehler beim Hinzufügen der Rollen: {e}")
 
-def setup(bot):
+def setupJoin(bot):
     bot.add_cog(Join(bot))

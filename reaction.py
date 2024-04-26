@@ -1,119 +1,97 @@
-import discord
+import disnake
 import asyncio
-from discord.audit_logs import AuditLogEntry
-from discord.ext import commands
+from globalfile import Globalfile
+from collections import namedtuple
+import disnake.message
+import disnake.audit_logs
+from disnake.ext import commands
 from datetime import datetime, timedelta, timedelta
+from moderation import Moderation
 
 class Reaction(commands.Cog):
-    def __init__(self, bot):
+    def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.user_data = {}
-        self.TimerMustReseted = True
-        self.reset_timer()
-
-    def reset_timer(self):
-        asyncio.create_task(self.clear_user_data_after_6_minutes())
-
-    async def clear_user_data_after_6_minutes(self):
-        await asyncio.sleep(6 * 60)
-        self.user_data.clear()
-        self.TimerMustReseted = True
-    
-    @commands.Cog.listener()
-    async def on_message(self, message):
-        botrolle = discord.utils.get(message.guild.roles, name = "Bots")
-        if message.guild is not None:
-            if message.channel.id != 1208770898832658493 and message.channel.id != 1219347644640530553 and not botrolle in message.author.roles:                                
-                avatar_url = message.author.avatar.url
-                if avatar_url is None:
-                    avatar_url = message.author.default_avatar.url
-
-                print(f"Nachricht von Server {message.guild.name} erhalten: Channel: {message.channel.name}, Username: {message.author.name}, Userid: {message.author.id}, Content: {message.content}")                
-                embed = discord.Embed(title=f"Message send in <#{message.channel.id}>!", color=0x4169E1)                                                                
-                embed.set_author(name=message.author.name, icon_url=avatar_url)               
-                embed.add_field(name="Message:", value=message.content, inline=True)              
-                embed.set_footer(text=f"ID: {message.author.id} - heute um {(message.created_at + timedelta(hours=2)).strftime('%H:%M:%S')} Uhr \nMessage-ID: {message.id}")
-                if message.attachments:
-                    embed.set_image(url=message.attachments[0].url)
- 
-                channel = message.guild.get_channel(1208770898832658493)
-                await channel.send(embed=embed)
+        self.TimerMustReseted = True      
+        self.globalfile_instance = Globalfile(bot)   
+        self.moderation = Moderation(bot)     
 
     @commands.Cog.listener()
-    async def on_message_delete(self, message):
-        def add_user(user_id, number):
-            self.user_data[user_id] = number         
-        botrolle = discord.utils.get(message.guild.roles, name = "Bots")                     
-        if message.guild is not None and message.channel.id != 1208770898832658493 and message.channel.id != 1219347644640530553 and not botrolle in message.author.roles:                               
-                DeletedbyAdmin = False
-                async for entry in message.guild.audit_logs(limit=5, action=discord.AuditLogAction.message_delete, after=datetime.now() - timedelta(minutes=5)):                                            
-                    if entry.extra.count is not None:
-                        if self.TimerMustReseted:
-                            self.reset_timer()
-                            self.TimerMustReseted = False
-                        if entry.user_id in self.user_data:
-                            if entry.extra.count > self.user_data[entry.user_id]:
-                                self.user_data[entry.user_id] = entry.extra.count
-                                DeletedbyAdmin = True
-                                break
-                            else: 
-                                DeletedbyAdmin = False                        
-                                break
-                        else:
-                            self.user_data[entry.user_id] = entry.extra.count
-                            DeletedbyAdmin = True
-                            break  
-                    else:
-                        DeletedbyAdmin = False                                
-                        break
+    async def on_message(self, message: disnake.Message):
+        try:
+            botrolle = message.guild.get_role(854698446996766738)
+            if message.guild is not None:
+                if message.content != "" or len(message.attachments) > 0:
+                    if message.channel.id != 1208770898832658493 and message.channel.id != 1219347644640530553:
+                        if not botrolle in message.author.roles:                                
+                            avatar_url = message.author.avatar.url
+                            if avatar_url is None:
+                                avatar_url = message.author.default_avatar.url  
 
-                if DeletedbyAdmin:
-                    deleted_by = entry.user
-                    deleted_by_name = deleted_by.name
-                    deleted_by_id = deleted_by.id
-                else:
-                    deleted_by_name = message.author.name
-                    deleted_by_id = message.author.id   
+                            await self.moderation.check_message_for_badwords(message)
+                            print(f"Nachricht von Server {message.guild.name} erhalten: Channel: {message.channel.name}, Username: {message.author.name}, Userid: {message.author.id}, Content: {message.content}")                
+                            embed = disnake.Embed(title=f"Message send in <#{message.channel.id}>!", color=0x4169E1)                                                                
+                            embed.set_author(name=message.author.name, icon_url=avatar_url)               
+                            embed.add_field(name="Message:", value=message.content, inline=True)              
+                            embed.set_footer(text=f"ID: {message.author.id} - heute um {(message.created_at + timedelta(hours=2)).strftime('%H:%M:%S')} Uhr \nMessage-ID: {message.id}")
+                            if message.attachments:
+                                embed.set_image(url=message.attachments[0].url)
+            
+                            channel = message.guild.get_channel(1208770898832658493)
+                            await channel.send(embed=embed)
+        except Exception as e:
+            print(f"Fehler aufgetreten: {e}")        
 
-                avatar_url = message.author.avatar.url               
-                if avatar_url is None:
-                    avatar_url = message.author.default_avatar.url
+    @commands.Cog.listener()
+    async def on_message_delete(self, message: disnake.Message):      
+        botrolle = message.guild.get_role(854698446996766738)                     
+        if message.guild is not None and message.channel.id != 1208770898832658493 and message.channel.id != 1219347644640530553: 
+            if not botrolle in message.author.roles:                               
+                try:
+                    User = await self.globalfile_instance.admin_did_something(disnake.AuditLogAction.message_delete, message.author)
+                    avatar_url = message.author.avatar.url               
+                    if avatar_url is None:
+                        avatar_url = message.author.default_avatar.url
 
-                current_datetime = datetime.now()
+                    current_datetime = datetime.now()
                     
-                print(f"Nachricht von Server {message.guild.name} deleted: Channel: {message.channel.name}. Username: {message.author.name}, Userid: {message.author.id}, Content: {message.content}, Message deleted by: {deleted_by_name}, User ID: {str(deleted_by_id)}")                                  
-                embed = discord.Embed(title=f"Message deleted in <#{message.channel.id}>!", color=0xFF0000)                                                 
-                embed.set_author(name=message.author.name, icon_url=avatar_url)               
-                embed.add_field(name="Message:", value=message.content, inline=False)              
-                embed.add_field(name="Deleted by:", value=f"{deleted_by_name} - {str(deleted_by_id)}", inline=False)
-                embed.set_footer(text=f"ID: {message.author.id} - heute um {(current_datetime + timedelta(hours=1)).strftime('%H:%M:%S')} Uhr \nMessage-ID: {message.id}")
+                    print(f"Nachricht von Server {message.guild.name} deleted: Channel: {message.channel.name}. Username: {message.author.name}, Userid: {message.author.id}, Content: {message.content}, Message deleted by: {User.username}, User ID: {str(User.userid)}")                                  
+                    embed = disnake.Embed(title=f"Message deleted in <#{message.channel.id}>!", color=0xFF0000)                                                 
+                    embed.set_author(name=message.author.name, icon_url=avatar_url)               
+                    embed.add_field(name="Message:", value=message.content, inline=False)              
+                    embed.add_field(name="Deleted by:", value=f"{User.username} - {str(User.userid)}", inline=False)
+                    embed.set_footer(text=f"ID: {message.author.id} - heute um {(current_datetime + timedelta(hours=1)).strftime('%H:%M:%S')} Uhr \nMessage-ID: {message.id}")
 
-                channel = message.guild.get_channel(1208770898832658493)
-                await channel.send(embed=embed)          
+                    channel = message.guild.get_channel(1208770898832658493)
+                    await channel.send(embed=embed)
+                except Exception as e:
+                    print(f"Fehler aufgetreten: {e}")
 
     @commands.Cog.listener()
-    async def on_message_edit(self, before, after):
-        if before.guild is not None:
-            botrolle = discord.utils.get(before.guild.roles, name = "Bots")            
-            if before.channel.id != 1208770898832658493 and message.channel.id != 1219347644640530553 and not botrolle in before.author.roles:                          
-                
-                avatar_url = before.author.avatar.url               
-                if avatar_url is None:
-                    avatar_url = before.author.default_avatar.url                                 
-                
-                current_datetime = datetime.now()
+    async def on_message_edit(self, before: disnake.Message, after: disnake.Message):
+        try:
+            if before.guild is not None:
+                botrolle = before.guild.get_role(854698446996766738)              
+                if before.channel.id != 1208770898832658493 and before.channel.id != 1219347644640530553 and not botrolle in before.author.roles:                                              
+                    avatar_url = before.author.avatar.url               
+                    if avatar_url is None:
+                        avatar_url = before.author.default_avatar.url                                 
+                    
+                    current_datetime = datetime.now()
 
-                print(f"Nachricht von Server {before.guild.name} edited: Channel {after.channel.name}, Username: {before.author.name}, Userid: {before.author.id}, Content before: {before.content}, Content after: {after.content}")
-                embed = discord.Embed(title=f"Message edited in <#{after.channel.id}>!", color=0xFFA500)
-                embed.set_author(name=after.author.name, icon_url=avatar_url)               
-                embed.add_field(name="Message before:", value=before.content, inline=False)              
-                embed.add_field(name="Message after:", value=after.content, inline=False)              
-                embed.set_footer(text=f"ID: {before.author.id} - heute um {(current_datetime + timedelta(hours=1)).strftime('%H:%M:%S')} Uhr \nMessage-ID: {before.id}")
-                if before.attachments:
-                    embed.set_image(url=before.attachments[0].url)
+                    print(f"Nachricht von Server {before.guild.name} edited: Channel {after.channel.name}, Username: {before.author.name}, Userid: {before.author.id}, Content before: {before.content}, Content after: {after.content}")
+                    embed = disnake.Embed(title=f"Message edited in <#{after.channel.id}>!", color=0xFFA500)
+                    embed.set_author(name=after.author.name, icon_url=avatar_url)               
+                    embed.add_field(name="Message before:", value=before.content, inline=False)              
+                    embed.add_field(name="Message after:", value=after.content, inline=False)              
+                    embed.set_footer(text=f"ID: {before.author.id} - heute um {(current_datetime + timedelta(hours=1)).strftime('%H:%M:%S')} Uhr \nMessage-ID: {before.id}")
+                    if before.attachments:
+                        embed.set_image(url=before.attachments[0].url)
 
-                channel = before.guild.get_channel(1208770898832658493)
-                await channel.send(embed=embed)
-
-def setup(bot):
+                    channel = before.guild.get_channel(1208770898832658493)
+                    await channel.send(embed=embed)
+        except Exception as e:
+                print(f"Fehler aufgetreten: {e}")
+                   
+def setupReaction(bot):
     bot.add_cog(Reaction(bot))
