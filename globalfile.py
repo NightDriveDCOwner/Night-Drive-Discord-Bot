@@ -1,4 +1,4 @@
-import disnake
+import disnake, os
 import disnake.audit_logs
 from disnake.ext import commands, tasks
 from datetime import datetime, timedelta, timedelta
@@ -6,6 +6,7 @@ from collections import namedtuple
 import asyncio
 import time
 import re
+from typing import Union
 
 
 class Globalfile(commands.Cog):
@@ -40,12 +41,19 @@ class Globalfile(commands.Cog):
                 seconds += int(value) * 31536000 # Ein Jahr hat etwa 365 Tage
         return seconds
 
-    async def save_image(self, attachment, user_id):
-        """Speichert ein Bild als Beweis."""
-        # Hier musst du deine eigene Logik implementieren, um das Bild zu speichern
-        # Zum Beispiel:
-        await attachment.save(f"proofs/{user_id}_proof.png")
-
+    @staticmethod
+    async def save_image(attachment: disnake.Attachment, file_name: str):
+        # Speichere das Bild mit dem neuen Dateinamen
+        save_path = "proofs"
+        
+        # Überprüfen, ob der Ordner existiert, und falls nicht, erstellen
+        if not os.path.exists(save_path):
+            os.makedirs(save_path)
+        
+        # Speichere das Bild mit dem neuen Dateinamen
+        await attachment.save(f"{save_path}/{file_name}.png")
+        return f"{save_path}/{file_name}.png"
+    
     @tasks.loop(seconds=60) 
     async def unban_task(self):
         """Entbanne Benutzer, deren Bannzeit abgelaufen ist."""
@@ -62,6 +70,9 @@ class Globalfile(commands.Cog):
                 for ban in bans:
                     if ban.strip().split(',')[0] != member_id:
                         file.write(ban)
+                else:
+                    # Füge "Show=False" hinzu, wenn der Benutzer entbannt wird
+                    file.write(ban.strip() + ", Show=False\n")
 
     def reset_timer(self):
         asyncio.create_task(self.clear_user_data_after_6_minutes())
@@ -71,7 +82,7 @@ class Globalfile(commands.Cog):
         self.user_data.clear()
         self.TimerMustReseted = True   
 
-    async def admin_did_something(self, action: disnake.AuditLogAction, handleduser: disnake.user):
+    async def admin_did_something(self, action: disnake.AuditLogAction, handleduser: Union[disnake.User, disnake.Member]):
         DeletedbyAdmin = False
         guild = self.bot.get_guild(854698446996766730)
         async for entry in guild.audit_logs(limit=5, action=action, after=datetime.now() - timedelta(minutes=5)):                                            
@@ -95,15 +106,26 @@ class Globalfile(commands.Cog):
                 DeletedbyAdmin = False                                
                 break
 
-        if action == disnake.AuditLogAction.message_delete:
+        if action == disnake.AuditLogAction.message_delete or action == disnake.AuditLogAction.member_disconnect:
             if DeletedbyAdmin:
                 user = entry.user
                 username = user.name
                 userid = user.id
             else:
-                user = handleduser.author.name
-                userid = handleduser.author.id     
+                user = handleduser
+                username = handleduser.name
+                userid = handleduser.id     
         return self.UserRecord(user,username,userid)  
+    
+    def update_ids(caseid):
+        with open('.env', 'r') as file:
+            lines = file.readlines()
+        with open('.env', 'w') as file:
+            for line in lines:
+                if line.startswith("caseid"):
+                    file.write(f"caseid={caseid}\n")
+                else:
+                    file.write(line)
 
 def setupGlobal(bot):
     bot.add_cog(Globalfile(bot))

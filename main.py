@@ -5,13 +5,19 @@ from join import setupJoin
 from voice import setupVoice
 from globalfile import setupGlobal
 from moderation import setupModeration
+import disnake
+import logging
+
+logging.basicConfig(level=logging.INFO, filename="log.log", filemode="w", format="%(asctime)s - %(levelname)s - %(message)s")
+logger = logging.getLogger(__name__)
+formatter = logging.Formatter('[%(asctime)s - %(name)s - %(levelname)s]: %(message)s')
 
 intents = disnake.Intents.all()
-bot = commands.Bot(intents=intents)
+bot = commands.Bot(intents=intents, command_prefix=None)
 
 @bot.event
 async def on_ready():
-    print("The bot is ready!")  
+    logger.info("The bot is ready!")  
    
 bot.load_extension("commands")
 setupReaction(bot)

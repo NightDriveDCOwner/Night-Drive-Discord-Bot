@@ -1,12 +1,18 @@
 import disnake
 from disnake.ext import commands
+import logging
 
 class Join(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        self.logger = logging.getLogger("Main")
+        formatter = logging.Formatter('[%(asctime)s - %(name)s - %(levelname)s - %(message)s]:')
+        handler = logging.StreamHandler()
+        handler.setFormatter(formatter)
+        self.logger.addHandler(handler)
 
     @commands.Cog.listener()
-    async def on_member_join(self, member):
+    async def on_member_join(self, member: disnake.member):
         try:
             frischling_id = 854698446996766731
             info_id = 1065696216060547092
@@ -25,10 +31,8 @@ class Join(commands.Cog):
             verify = disnake.utils.get(guild.roles, id=verify_id)
 
             await member.add_roles(frischling, info, hobbies, games, other, verify)
-
-            print(f"Der User {member.name} mit der ID: {member.id} hat die Rollen Frischling, Info, Hobbies, Games, Other und Verified erhalten.")
         except Exception as e:
-            print(f"Fehler beim Hinzufügen der Rollen: {e}")
+            self.logger.critical(f"Fehler beim Hinzufügen der Rollen: {e}")
 
 def setupJoin(bot):
     bot.add_cog(Join(bot))
