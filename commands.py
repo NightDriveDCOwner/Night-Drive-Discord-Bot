@@ -35,14 +35,14 @@ class MyCommands(commands.Cog):
 
     @commands.slash_command(guild_ids=[854698446996766730])
     @RoleHierarchy.check_permissions("Test-Supporter")
-    async def server(inter):
+    async def server(inter: disnake.ApplicationCommandInteraction):
         await inter.response.send_message(
             f"Server name: {inter.guild.name}\nTotal members: {inter.guild.member_count}"
         )    
 
     @commands.slash_command(guild_ids=[854698446996766730])
     @RoleHierarchy.check_permissions("Test-Supporter")
-    async def user(inter):
+    async def user(inter: disnake.ApplicationCommandInteraction):
         await inter.response.send_message(f"Your tag: {inter.author}\nYour ID: {inter.author.id}")                                    
                        
     @commands.slash_command(guild_ids=[854698446996766730])

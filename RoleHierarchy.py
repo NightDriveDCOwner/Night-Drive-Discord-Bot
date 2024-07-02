@@ -1,4 +1,4 @@
-import disnake
+import disnake, logging
 from functools import wraps
 
 class RoleHierarchy:
@@ -15,6 +15,12 @@ class RoleHierarchy:
                 "Co. Owner",
                 "Owner"
             ]
+            self.logger = logging.getLogger("Commands")
+            formatter = logging.Formatter('[%(asctime)s - %(name)s - %(levelname)s]: %(message)s')
+            handler = logging.StreamHandler()
+            handler.setFormatter(formatter)
+            self.logger.addHandler(handler)
+
 
         def has_role_or_higher(self, member: disnake.Member, role_name: str) -> bool:
             try:

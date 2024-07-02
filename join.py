@@ -12,7 +12,7 @@ class Join(commands.Cog):
         self.logger.addHandler(handler)
 
     @commands.Cog.listener()
-    async def on_member_join(self, member: disnake.member):
+    async def on_member_join(self, member: disnake.Member):
         try:
             frischling_id = 854698446996766731
             info_id = 1065696216060547092
@@ -31,6 +31,12 @@ class Join(commands.Cog):
             verify = disnake.utils.get(guild.roles, id=verify_id)
 
             await member.add_roles(frischling, info, hobbies, games, other, verify)
+            embed = disnake.Embed(title=f"Herzlich Willkommen!", color=0x6495ED)
+            embed.set_author("Night Drive")
+            embed.add_field(value=f"Ein wildes {member.mention} ist aufgetaucht, willkommen bei uns auf **Night Drive [18+]!**\nIn <#1039167130190491709> kannst du dir deine eigenen Rollen vergeben.\nIn <@1039167960012554260> kannst du dich nach Möglichkeit vorstellen damit die anderen wissen wer du bist.")
+            channel = guild.get_channel(854698447247769630)
+            await channel.send(embed=embed)
+                        
         except Exception as e:
             self.logger.critical(f"Fehler beim Hinzufügen der Rollen: {e}")
 

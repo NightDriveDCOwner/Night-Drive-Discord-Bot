@@ -24,5 +24,6 @@ setupReaction(bot)
 setupJoin(bot)
 setupVoice(bot)
 setupGlobal(bot)
+setupModeration(bot)
 
 bot.run("MTIwODE3NTc0ODk4MDkzNjc2NA.GGk_8k.IUe5KR-MSpolnO_I7rGtx5qsE1Tr0M9fyk7gfw")

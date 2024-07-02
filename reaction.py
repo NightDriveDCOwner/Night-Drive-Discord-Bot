@@ -104,7 +104,46 @@ class Reaction(commands.Cog):
         except Exception as e:
                 self.logger.critical(f"Fehler aufgetreten: {e}")
 
-        
+    @commands.Cog.listener()
+    async def on_member_update(self, before: disnake.Member, after: disnake.Member):
+        try:
+            # Überprüfen, ob sich die Rollen des Mitglieds geändert haben
+            if before.roles != after.roles:
+                added_roles = [role for role in after.roles if role not in before.roles]
+                removed_roles = [role for role in before.roles if role not in after.roles]
+
+                for role in added_roles:
+                    self.logger.info(f"Rolle hinzugefügt: {role.name} für {after.name} ({after.id})")
+
+                for role in removed_roles:
+                    self.logger.info(f"Rolle entfernt: {role.name} von {after.name} ({after.id})")
+
+                current_datetime = datetime.now()
+                log_channel_id = 1221018527289577582
+                log_channel = self.bot.get_channel(log_channel_id)
+                if log_channel:
+                    if not added_roles == None and not removed_roles == None:
+                        embed = disnake.Embed(title="Rollenaktualisierung", color=0x4169E1)
+                    elif not added_roles == None:
+                        embed = disnake.Embed(title="Member update: Rolle wurde entfernt", color=0x4169E1)
+                    elif not removed_roles == None:
+                        embed = disnake.Embed(title="Member update: Rolle wurde hinzugefügt", color=0x4169E1)
+                    
+                    avatar_url = after.avatar.url               
+                    if avatar_url is None:
+                        avatar_url = after.default_avatar.url  
+
+                    embed.set_author(name=after.name, icon_url=avatar_url)
+                    embed.add_field(name="Mitglied", value=after.mention, inline=False)
+                    if not added_roles == None:                        
+                        embed.add_field(name="Hinzugefügte Rollen", value=", ".join([role.mention for role in added_roles]), inline=False)
+                    if not removed_roles == None:
+                        embed.add_field(name="Entfernte Rollen", value=", ".join([role.mention for role in removed_roles]), inline=False)                        
+                    embed.set_footer(text=f"ID: {before.id} - heute um {(current_datetime + timedelta(hours=1)).strftime('%H:%M:%S')} Uhr")
+                    await log_channel.send(embed=embed)
+
+        except Exception as e:
+            self.logger.critical(f"Fehler aufgetreten: {e}")    
 
 def setupReaction(bot):
     bot.add_cog(Reaction(bot))
