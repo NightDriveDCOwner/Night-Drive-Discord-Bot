@@ -1,12 +1,18 @@
-import discord
-from discord.ext import commands
+import disnake
+from disnake.ext import commands
+import logging
 
 class Join(commands.Cog):
-    def __init__(self, bot):
+    def __init__(self, bot: commands.Bot):
         self.bot = bot
+        self.logger = logging.getLogger("Main")
+        formatter = logging.Formatter('[%(asctime)s - %(name)s - %(levelname)s - %(message)s]:')
+        handler = logging.StreamHandler()
+        handler.setFormatter(formatter)
+        self.logger.addHandler(handler)
 
     @commands.Cog.listener()
-    async def on_member_join(self, member):
+    async def on_member_join(self, member: disnake.Member):
         try:
             frischling_id = 854698446996766731
             info_id = 1065696216060547092
@@ -17,18 +23,22 @@ class Join(commands.Cog):
 
             guild = member.guild
 
-            frischling = discord.utils.get(guild.roles, id=frischling_id)
-            info = discord.utils.get(guild.roles, id=info_id)
-            hobbies = discord.utils.get(guild.roles, id=hobbies_id)
-            games = discord.utils.get(guild.roles, id=games_id)
-            other = discord.utils.get(guild.roles, id=other_id)
-            verify = discord.utils.get(guild.roles, id=verify_id)
+            frischling = disnake.utils.get(guild.roles, id=frischling_id)
+            info = disnake.utils.get(guild.roles, id=info_id)
+            hobbies = disnake.utils.get(guild.roles, id=hobbies_id)
+            games = disnake.utils.get(guild.roles, id=games_id)
+            other = disnake.utils.get(guild.roles, id=other_id)
+            verify = disnake.utils.get(guild.roles, id=verify_id)
 
             await member.add_roles(frischling, info, hobbies, games, other, verify)
-
-            print(f"Der User {member.name} mit der ID: {member.id} hat die Rollen Frischling, Info, Hobbies, Games, Other und Verified erhalten.")
+            embed = disnake.Embed(title=f"Herzlich Willkommen!", color=0x6495ED)
+            embed.set_author("Night Drive")
+            embed.add_field(value=f"Ein wildes {member.mention} ist aufgetaucht, willkommen bei uns auf **Night Drive [18+]!**\nIn <#1039167130190491709> kannst du dir deine eigenen Rollen vergeben.\nIn <@1039167960012554260> kannst du dich nach Möglichkeit vorstellen damit die anderen wissen wer du bist.")
+            channel = guild.get_channel(854698447247769630)
+            await channel.send(embed=embed)
+                        
         except Exception as e:
-            print(f"Fehler beim Hinzufügen der Rollen: {e}")
+            self.logger.critical(f"Fehler beim Hinzufügen der Rollen: {e}")
 
-def setup(bot):
+def setupJoin(bot):
     bot.add_cog(Join(bot))
