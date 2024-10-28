@@ -1,31 +1,27 @@
-import mysql.connector
+import sqlite3
+from sqlite3 import Connection
 
-def create_db_connection(host_name, user_name, user_password, db_name):
-    connection = None
-    try:
-        connection = mysql.connector.connect(
-            host=host_name,
-            user=user_name,
-            passwd=user_password,
-            database=db_name
-        )
-        print("MySQL Database connection successful")
-    except Exception as err:
-        print(f"Error: '{err}'")
+class DatabaseConnection:
+    _instance = None
+    _connection = None
 
-    return connection
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super(DatabaseConnection, cls).__new__(cls)
+            cls._connection = sqlite3.connect('nightdrive')
+        return cls._instance
 
-def execute_sql_statement(connection:mysql.connector.CMySQLConnection, query):
-    cursor = connection.cursor()
-    try:
-        cursor.execute(query)
-        connection.commit()
-        print("SQL statement executed successfully")
-    except Exception as err:
-        print(f"Error: '{err}'")
-    finally:
-        if cursor:
+    @property
+    def connection(self) -> Connection:
+        return self._connection
+
+    def execute_sql_statement(self, query: str, params: tuple = ()):
+        cursor = self._connection.cursor()
+        try:
+            cursor.execute(query, params)
+            self._connection.commit()
+            return cursor
+        except Exception as err:
+            print(f"Error: '{err}'")
+        finally:
             cursor.close()
-
-# Beispiel für die Verwendung der Funktionen
-connection = create_db_connection("localhost", "your_username", "your_password", "testdb")
