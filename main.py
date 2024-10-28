@@ -8,6 +8,10 @@ from moderation import setupModeration
 import disnake
 import logging
 
+root_logger = logging.getLogger()
+for handler in root_logger.handlers[:]:
+    root_logger.removeHandler(handler)
+
 logging.basicConfig(level=logging.INFO, filename="log.log", filemode="w", format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 formatter = logging.Formatter('[%(asctime)s - %(name)s - %(levelname)s]: %(message)s')

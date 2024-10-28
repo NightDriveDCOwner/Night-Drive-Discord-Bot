@@ -8,6 +8,7 @@ from disnake.ext import commands
 from datetime import datetime, timedelta, timedelta
 from moderation import Moderation
 import logging
+from DBConnection import DatabaseConnection
 
 class Reaction(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -17,92 +18,142 @@ class Reaction(commands.Cog):
         self.globalfile_instance = Globalfile(bot)   
         self.moderation = Moderation(bot)    
         self.logger = logging.getLogger("Reaction")
-        formatter = logging.Formatter('[%(asctime)s - %(name)s - %(levelname)s]: %(message)s')
-        handler = logging.StreamHandler()
-        handler.setFormatter(formatter)
-        self.logger.addHandler(handler)
+        self.logger.setLevel(logging.INFO)
+        self.globalfile = Globalfile(bot)        
+        self.db = DatabaseConnection()
+
+        # Überprüfen, ob der Handler bereits hinzugefügt wurde
+        if not self.logger.handlers:
+            formatter = logging.Formatter('[%(asctime)s - %(name)s - %(levelname)s]: %(message)s')
+            handler = logging.StreamHandler()
+            handler.setFormatter(formatter)
+            self.logger.addHandler(handler)
 
  
 
     @commands.Cog.listener()
     async def on_message(self, message: disnake.Message):
         try:
-            botrolle = message.guild.get_role(854698446996766738)
             if message.guild is not None:
-                if message.content != "" or len(message.attachments) > 0:
+                botrolle = message.guild.get_role(854698446996766738)
+                member = await self.globalfile.get_member_from_user(message.author, message.guild.id)
+                if member and (message.content != "" or len(message.attachments) > 0):
                     if message.channel.id != 1208770898832658493 and message.channel.id != 1219347644640530553:
-                        if not botrolle in message.author.roles:                                
-                            avatar_url = message.author.avatar.url
-                            if avatar_url is None:
-                                avatar_url = message.author.default_avatar.url  
+                        if botrolle not in member.roles:                                
+                            avatar_url = member.avatar.url if member.avatar else member.default_avatar.url
 
                             await self.moderation.check_message_for_badwords(message)
-                            self.logger.info(f"Nachricht von Server {message.guild.name} erhalten: Channel: {message.channel.name}, Username: {message.author.name}, Userid: {message.author.id}, Content: {message.content}")                
+                            self.logger.info(f"Nachricht von Server {message.guild.name} erhalten: Channel: {message.channel.name}, Username: {member.name}, Userid: {member.id}, Content: {message.content}")                
                             embed = disnake.Embed(title=f"Message send in <#{message.channel.id}>!", color=0x4169E1)                                                                
-                            embed.set_author(name=message.author.name, icon_url=avatar_url)               
+                            embed.set_author(name=member.name, icon_url=avatar_url)               
                             embed.add_field(name="Message:", value=message.content, inline=True)              
-                            embed.set_footer(text=f"ID: {message.author.id} - heute um {(message.created_at + timedelta(hours=2)).strftime('%H:%M:%S')} Uhr \nMessage-ID: {message.id}")
+                            embed.set_footer(text=f"ID: {member.id} - heute um {(message.created_at + timedelta(hours=1)).strftime('%H:%M:%S')} Uhr \nMessage-ID: {message.id}")
                             if message.attachments:
                                 embed.set_image(url=message.attachments[0].url)
             
                             channel = message.guild.get_channel(1208770898832658493)
+                            userrecord = self.globalfile.get_user_record(discordid=member.id)
+                            # Speichern der Nachricht in der Datenbank
+                            cursor = self.db.connection.cursor()
+                            current_datetime = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                            image_paths = [attachment.url for attachment in message.attachments]
+                            if len(image_paths) != 0:
+                                image_path_fields = ", " + ', '.join([f"IMAGEPATH{i+1}" for i in range(len(image_paths))])
+                                image_path_values = ", " + ', '.join(['?' for _ in range(len(image_paths))])
+                            else:
+                                image_path_fields = ""
+                                image_path_values = ""
+                            query = f"INSERT INTO MESSAGE (CONTENT, USERID, CHANNELID, MESSAGEID, INSERT_DATE {image_path_fields}) VALUES (?, ?, ?, ?, ?{image_path_values})"
+                            cursor.execute(query, (message.content, userrecord['ID'], message.channel.id, message.id, current_datetime, *image_paths))
+                            self.db.connection.commit()
                             await channel.send(embed=embed)
         except Exception as e:
-            self.logger.critical(f"Fehler aufgetreten: {e}")        
+            self.logger.critical(f"Fehler aufgetreten: {e}") 
 
     @commands.Cog.listener()
     async def on_message_delete(self, message: disnake.Message):      
-        botrolle = message.guild.get_role(854698446996766738)                     
-        if message.guild is not None and message.channel.id != 1208770898832658493 and message.channel.id != 1219347644640530553: 
-            if not botrolle in message.author.roles:                               
-                try:
-                    User = await self.globalfile_instance.admin_did_something(disnake.AuditLogAction.message_delete, message.author)
-                    avatar_url = message.author.avatar.url               
-                    if avatar_url is None:
-                        avatar_url = message.author.default_avatar.url
+        if message.guild is not None:        
+            botrolle = message.guild.get_role(854698446996766738)                     
+            member = await self.globalfile.get_member_from_user(message.author, message.guild.id)
+            if member and message.channel.id != 1208770898832658493 and message.channel.id != 1219347644640530553: 
+                if botrolle not in member.roles:                               
+                    try:
+                        User = await self.globalfile_instance.admin_did_something(disnake.AuditLogAction.message_delete, member)
+                        avatar_url = member.avatar.url if member.avatar else member.default_avatar.url
 
-                    current_datetime = datetime.now()
-                    
-                    self.logger.info(f"Nachricht von Server {message.guild.name} deleted: Channel: {message.channel.name}. Username: {message.author.name}, Userid: {message.author.id}, Content: {message.content}, Message deleted by: {User.username}, User ID: {str(User.userid)}")                                  
-                    embed = disnake.Embed(title=f"Message deleted in <#{message.channel.id}>!", color=0xFF0000)                                                 
-                    embed.set_author(name=message.author.name, icon_url=avatar_url)               
-                    embed.add_field(name="Message:", value=message.content, inline=False)              
-                    embed.add_field(name="Deleted by:", value=f"{User.username} - {str(User.userid)}", inline=False)
-                    embed.set_footer(text=f"ID: {message.author.id} - heute um {(current_datetime + timedelta(hours=1)).strftime('%H:%M:%S')} Uhr \nMessage-ID: {message.id}")
+                        current_datetime = datetime.now()
+                        
+                        self.logger.info(f"Nachricht von Server {message.guild.name} deleted: Channel: {message.channel.name}. Username: {member.name}, Userid: {member.id}, Content: {message.content}, Message deleted by: {User.username}, User ID: {str(User.userid)}")                                  
+                        embed = disnake.Embed(title=f"Message deleted in <#{message.channel.id}>!", color=0xFF0000)                                                 
+                        embed.set_author(name=member.name, icon_url=avatar_url)               
+                        embed.add_field(name="Message:", value=message.content, inline=False)              
+                        embed.add_field(name="Deleted by:", value=f"{User.username} - {str(User.userid)}", inline=False)
+                        embed.set_footer(text=f"ID: {member.id} - heute um {(current_datetime + timedelta(hours=1)).strftime('%H:%M:%S')} Uhr \nMessage-ID: {message.id}")
 
-                    if User.username == message.author.name:
-                        channel = message.guild.get_channel(1208770898832658493)
-                    else:
-                        channel = message.guild.get_channel(1221018527289577582)
-                    await channel.send(embed=embed)
-                except Exception as e:
-                    self.logger.critical(f"Fehler aufgetreten: {e}")   
+                        if User.username == member.name:
+                            channel = message.guild.get_channel(1208770898832658493)
+                        else:
+                            channel = message.guild.get_channel(1221018527289577582)
+
+
+                        # Ermitteln der USERID des Admins, der die Nachricht gelöscht hat
+                        cursor = self.db.connection.cursor()
+                        cursor.execute("SELECT ID FROM USER WHERE DISCORDID = ?", (User.userid,))
+                        admin_user_id = cursor.fetchone()
+                        if admin_user_id:
+                            admin_user_id = admin_user_id[0]
+
+                        # Aktualisieren der Nachricht in der Datenbank mit DELETED_BY
+                        cursor.execute("UPDATE MESSAGE SET DELETED_BY = ? WHERE MESSAGEID = ? AND CHANNELID = ?", (admin_user_id, message.id, message.channel.id))
+                        self.db.connection.commit()
+                        await channel.send(embed=embed)                        
+                    except Exception as e:
+                        self.logger.critical(f"Fehler aufgetreten: {e}")  
 
     @commands.Cog.listener()
     async def on_message_edit(self, before: disnake.Message, after: disnake.Message):
         try:
             if before.guild is not None:
                 botrolle = before.guild.get_role(854698446996766738)              
-                if before.channel.id != 1208770898832658493 and before.channel.id != 1219347644640530553 and not botrolle in before.author.roles:                                              
-                    avatar_url = before.author.avatar.url               
-                    if avatar_url is None:
-                        avatar_url = before.author.default_avatar.url                                 
-                    
+                member = await self.globalfile.get_member_from_user(before.author, before.guild.id)
+                if member and before.channel.id != 1208770898832658493 and before.channel.id != 1219347644640530553 and botrolle not in member.roles:                                              
+                    avatar_url = member.avatar.url if member.avatar else member.default_avatar.url
                     current_datetime = datetime.now()
 
-                    self.logger.info(f"Nachricht von Server {before.guild.name} edited: Channel {after.channel.name}, Username: {before.author.name}, Userid: {before.author.id}, Content before: {before.content}, Content after: {after.content}")
+                    self.logger.info(f"Nachricht von Server {before.guild.name} edited: Channel {after.channel.name}, Username: {member.name}, Userid: {member.id}, Content before: {before.content}, Content after: {after.content}")
                     embed = disnake.Embed(title=f"Message edited in <#{after.channel.id}>!", color=0xFFA500)
-                    embed.set_author(name=after.author.name, icon_url=avatar_url)               
+                    embed.set_author(name=member.name, icon_url=avatar_url)               
                     embed.add_field(name="Message before:", value=before.content, inline=False)              
                     embed.add_field(name="Message after:", value=after.content, inline=False)              
-                    embed.set_footer(text=f"ID: {before.author.id} - heute um {(current_datetime + timedelta(hours=1)).strftime('%H:%M:%S')} Uhr \nMessage-ID: {before.id}")
+                    embed.set_footer(text=f"ID: {member.id} - heute um {(current_datetime + timedelta(hours=1)).strftime('%H:%M:%S')} Uhr \nMessage-ID: {before.id}")
                     if before.attachments:
                         embed.set_image(url=before.attachments[0].url)
 
                     channel = before.guild.get_channel(1208770898832658493)
-                    await channel.send(embed=embed)
+
+                    # Ermitteln der MESSAGE_BEFORE-ID
+                    cursor = self.db.connection.cursor()
+                    cursor.execute("SELECT ID FROM MESSAGE WHERE MESSAGEID = ? AND CHANNELID = ?", (before.id, before.channel.id))
+                    message_before_id = cursor.fetchone()
+                    if message_before_id:
+                        message_before_id = message_before_id[0]
+                    
+                    userrecord = self.globalfile.get_user_record(discordid=member.id)
+                    # Speichern der bearbeiteten Nachricht in der Datenbank
+                    current_datetime = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    image_paths = [attachment.url for attachment in after.attachments]
+                    if len(image_paths) != 0:
+                        image_path_fields = ", " + ', '.join([f"IMAGEPATH{i+1}" for i in range(len(image_paths))])
+                        image_path_values = ", " + ', '.join(['?' for _ in range(len(image_paths))])
+                    else:
+                        image_path_fields = ""
+                        image_path_values = ""
+                    query = f"INSERT INTO MESSAGE (CONTENT, USERID, CHANNELID, MESSAGEID, MESSAGE_BEFORE, INSERTDATE{image_path_fields}) VALUES (?, ?, ?, ?, ?, ?{image_path_values})"
+                    cursor.execute(query, (after.content, userrecord['ID'], after.channel.id, after.id, message_before_id, current_datetime, *image_paths))
+                    self.db.connection.commit()
+                    await channel.send(embed=embed)                    
         except Exception as e:
-                self.logger.critical(f"Fehler aufgetreten: {e}")
+            self.logger.critical(f"Fehler aufgetreten: {e}")
 
     @commands.Cog.listener()
     async def on_member_update(self, before: disnake.Member, after: disnake.Member):
@@ -122,28 +173,22 @@ class Reaction(commands.Cog):
                 log_channel_id = 1221018527289577582
                 log_channel = self.bot.get_channel(log_channel_id)
                 if log_channel:
-                    if not added_roles == None and not removed_roles == None:
+                    if added_roles or removed_roles:
                         embed = disnake.Embed(title="Rollenaktualisierung", color=0x4169E1)
-                    elif not added_roles == None:
-                        embed = disnake.Embed(title="Member update: Rolle wurde entfernt", color=0x4169E1)
-                    elif not removed_roles == None:
-                        embed = disnake.Embed(title="Member update: Rolle wurde hinzugefügt", color=0x4169E1)
-                    
-                    avatar_url = after.avatar.url               
-                    if avatar_url is None:
-                        avatar_url = after.default_avatar.url  
-
-                    embed.set_author(name=after.name, icon_url=avatar_url)
-                    embed.add_field(name="Mitglied", value=after.mention, inline=False)
-                    if not added_roles == None:                        
-                        embed.add_field(name="Hinzugefügte Rollen", value=", ".join([role.mention for role in added_roles]), inline=False)
-                    if not removed_roles == None:
-                        embed.add_field(name="Entfernte Rollen", value=", ".join([role.mention for role in removed_roles]), inline=False)                        
-                    embed.set_footer(text=f"ID: {before.id} - heute um {(current_datetime + timedelta(hours=1)).strftime('%H:%M:%S')} Uhr")
-                    await log_channel.send(embed=embed)
+                        avatar_url = after.avatar.url if after.avatar else after.default_avatar.url
+                        embed.set_author(name=after.name, icon_url=avatar_url)
+                        embed.add_field(name="Mitglied", value=after.mention, inline=False)
+                        if added_roles:                        
+                            embed.add_field(name="Hinzugefügte Rollen", value=", ".join([role.mention for role in added_roles]), inline=False)
+                        if removed_roles:
+                            embed.add_field(name="Entfernte Rollen", value=", ".join([role.mention for role in removed_roles]), inline=False)                        
+                        embed.set_footer(text=f"ID: {before.id} - heute um {(current_datetime + timedelta(hours=1)).strftime('%H:%M:%S')} Uhr")
+                        await log_channel.send(embed=embed)
 
         except Exception as e:
-            self.logger.critical(f"Fehler aufgetreten: {e}")    
+            self.logger.critical(f"Fehler aufgetreten: {e}")     
+
+    
 
 def setupReaction(bot):
     bot.add_cog(Reaction(bot))

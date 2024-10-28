@@ -7,6 +7,7 @@ import asyncio
 import time
 import re
 from typing import Union
+from DBConnection import DatabaseConnection
 
 
 class Globalfile(commands.Cog):
@@ -22,11 +23,22 @@ class Globalfile(commands.Cog):
             self.user_data = {}
             self.TimerMustReseted = True
             self.UserRecord = namedtuple('UserRecord', ['user','username','userid'])
-            self.logger = logging.getLogger("Commands")
+            self.db = DatabaseConnection()             
+            
+        self.logger = logging.getLogger("Globalfile")
+        self.logger.setLevel(logging.INFO)           
+
+        # Überprüfen, ob der Handler bereits hinzugefügt wurde
+        if not self.logger.handlers:
             formatter = logging.Formatter('[%(asctime)s - %(name)s - %(levelname)s]: %(message)s')
             handler = logging.StreamHandler()
             handler.setFormatter(formatter)
             self.logger.addHandler(handler)
+
+        if not self.unban_task.is_running():
+            self.unban_task.start()
+        if not self.check_warn_levels.is_running():
+            self.check_warn_levels.start()          
 
     def convert_duration_to_seconds(self, duration: str) -> int:
         """Konvertiere eine Zeitangabe in Sekunden."""
@@ -45,6 +57,12 @@ class Globalfile(commands.Cog):
             elif unit == 'j':
                 seconds += int(value) * 31536000 # Ein Jahr hat etwa 365 Tage
         return seconds
+    
+    def calculate_future_time(self, seconds: int) -> str:
+        """Berechne die zukünftige Zeit basierend auf der aktuellen Zeit und einer Anzahl von Sekunden."""
+        now: datetime.now
+        future_time = now + datetime.timedelta(seconds=seconds)
+        return future_time.strftime('%Y-%m-%d %H:%M:%S')
 
     @staticmethod
     async def save_image(attachment: disnake.Attachment, file_name: str):
@@ -59,25 +77,43 @@ class Globalfile(commands.Cog):
         await attachment.save(f"{save_path}/{file_name}.png")
         return f"{save_path}/{file_name}.png"
     
-    @tasks.loop(seconds=60) 
+    @tasks.loop(minutes=1)
     async def unban_task(self):
-        """Entbanne Benutzer, deren Bannzeit abgelaufen ist."""
-        current_time = time.time()
-        with open('bans.txt', 'r', encoding='utf-8') as file:
-            bans = file.readlines()
-        to_unban = [ban.strip().split(',') for ban in bans if float(ban.strip().split(',')[1]) <= current_time]
-        for member_id, _ in to_unban:
-            member = await self.bot.fetch_user(int(member_id))
-            guild = self.bot.get_guild(854698446996766730) # Ersetze dies durch die ID deines Servers
-            await guild.unban(member)
-            # Entferne den Benutzer aus der Datei
-            with open('bans.txt', 'w', encoding='utf-8') as file:
-                for ban in bans:
-                    if ban.strip().split(',')[0] != member_id:
-                        file.write(ban)
-                else:
-                    # Füge "Show=False" hinzu, wenn der Benutzer entbannt wird
-                    file.write(ban.strip() + ", Show=False\n")
+        """Überprüft regelmäßig die Banndauer und entbannt Benutzer, deren Banndauer abgelaufen ist."""
+        cursor = self.db.connection.cursor()
+        cursor.execute("SELECT USERID, BANNEDTO FROM BAN WHERE UNBAN = 0")
+        bans = cursor.fetchall()
+
+        for ban in bans:
+            user_id, ban_end_timestamp = ban
+            if ban_end_timestamp and datetime.now().timestamp() > ban_end_timestamp:
+                # Banndauer ist abgelaufen, Benutzer entbannen
+                guild = self.bot.get_guild(854698446996766730)  # Ersetzen Sie dies durch die tatsächliche ID Ihres Servers
+                user = await self.bot.fetch_user(user_id)
+                await guild.unban(user)
+                cursor.execute("UPDATE BAN SET UNBAN = 1 WHERE USERID = ?", (user_id,))
+                self.db.connection.commit()
+                self.logger.info(f"User {user_id} wurde automatisch entbannt.")
+        
+
+    def get_user_record(self, user_id: int = None, username: str = "", discordid: str = "") -> dict:
+        """Holt die ID, den Benutzernamen und die Discord-ID des Datensatzes aus der Tabelle User basierend auf Benutzername und User ID."""
+        cursor = self.db.connection.cursor()
+        query = "SELECT ID, USERNAME, DISCORDID FROM USER WHERE USERNAME = ? OR DISCORDID = ? OR ID = ?"
+        cursor.execute(query, (username, discordid, user_id))
+        results = cursor.fetchall()
+
+        if len(results) > 2:
+            raise ValueError("Mehr als zwei Datensätze gefunden. Abbruch.")
+
+        if results:
+            result = results[0]
+            return {
+                'ID': result[0],
+                "USERNAME": result[1],
+                'DISCORDID': result[2]
+            }
+        return None
 
     def reset_timer(self):
         asyncio.create_task(self.clear_user_data_after_6_minutes())
@@ -132,16 +168,6 @@ class Globalfile(commands.Cog):
                 userid = handleduser.id     
         return self.UserRecord(user,username,userid)  
     
-    def update_ids(caseid):
-        with open('.env', 'r') as file:
-            lines = file.readlines()
-        with open('.env', 'w') as file:
-            for line in lines:
-                if line.startswith("caseid"):
-                    file.write(f"caseid={caseid}\n")
-                else:
-                    file.write(line)
-
     async def delete_message_by_id(self, channel_id: int, message_id: int):
         """Löscht eine Nachricht basierend auf ihrer ID in einem bestimmten Kanal."""
         try:
@@ -177,6 +203,101 @@ class Globalfile(commands.Cog):
                     self.logger.critical(f"Ein Fehler ist aufgetreten: {e}")
                     return # Ein anderer Fehler ist aufgetreten, also abbrechen
         print(f"Nachricht mit der ID {message_id} wurde nicht gefunden.")
+
+    def get_user_record_id(self, username: str = None, user_id: int = None) -> int:
+            """Holt die ID des Datensatzes aus der Tabelle User basierend auf Benutzername und/oder User ID."""
+            cursor = self.db.connection.cursor()
+            
+            if username and user_id:
+                query = "SELECT ID FROM USER WHERE USERNAME = ? AND USERID = ?"
+                cursor.execute(query, (username, user_id))
+            elif username:
+                query = "SELECT ID FROM User WHERE USERNAME = ?"
+                cursor.execute(query, (username,))
+            elif user_id:
+                query = "SELECT ID FROM User WHERE USERID = ?"
+                cursor.execute(query, (user_id,))
+            else:
+                return None
+            
+            result = cursor.fetchone()
+            return result[0] if result else None        
+
+    def get_message_record_id(self, message_id: int) -> int:
+        """Holt die ID des Datensatzes aus der Tabelle Message basierend auf der Message ID."""
+        cursor = self.db.connection.cursor()
+        query = "SELECT ID FROM Message WHERE MESSAGEID = ?"
+        cursor.execute(query, (message_id,))
+        result = cursor.fetchone()
+        return result[0] if result else None
+    
+    async def get_member_from_user(self, user: disnake.User, guild_id: int) -> Union[disnake.Member, None]:
+        """Konvertiert einen disnake.User in einen disnake.Member, sofern der Benutzer Mitglied der Gilde ist."""
+        guild = self.bot.get_guild(guild_id)
+        if guild:
+            member = guild.get_member(user.id)
+            return member
+        return None    
+    
+    @tasks.loop(hours=1)
+    async def check_warn_levels(self):
+        """Überprüft regelmäßig die Warnlevel und reduziert sie gegebenenfalls."""
+        cursor = self.db.connection.cursor()
+        current_time = datetime.now()
+        four_months_ago = current_time - timedelta(days=4*30)  # Grobe Schätzung für 4 Monate
+
+        # Hole alle Benutzer mit WARNLEVEL > 0
+        cursor.execute("SELECT ID, WARNLEVEL FROM USER WHERE WARNLEVEL > 0")
+        users = cursor.fetchall()
+
+        for user_id, warnlevel in users:
+            # Überprüfe, wann der letzte Warn für diesen Benutzer war
+            cursor.execute("SELECT MAX(INSERTDATE) FROM WARN WHERE USERID = ?", (user_id,))
+            last_warn_date = cursor.fetchone()[0]
+
+            if last_warn_date and datetime.strptime(last_warn_date, '%Y-%m-%d %H:%M:%S') < four_months_ago:
+                # Überprüfe, wann die letzte System-Note für die Reduzierung des Warnlevels war
+                cursor.execute("SELECT MAX(INSERTDATE) FROM NOTE WHERE USERID = ? AND NOTE LIKE 'System Note: Warnlevel reduced%'", (user_id,))
+                last_note_date = cursor.fetchone()[0]
+
+                if not last_note_date or datetime.strptime(last_note_date, '%Y-%m-%d %H:%M:%S') < four_months_ago:
+                    # Reduziere das Warnlevel um 1
+                    new_warnlevel = max(0, warnlevel - 1)
+                    cursor.execute("UPDATE USER SET WARNLEVEL = ? WHERE ID = ?", (new_warnlevel, user_id))
+                    self.db.connection.commit()
+
+                    # Füge eine System-Note hinzu
+                    system_note = f"System Note: Warnlevel reduced from {warnlevel} to {new_warnlevel}"
+                    cursor.execute("INSERT INTO NOTE (NOTE, USERID, INSERTDATE) VALUES (?, ?, ?)", (system_note, user_id, current_time.strftime('%Y-%m-%d %H:%M:%S')))
+                    self.db.connection.commit()
+
+                    self.logger.info(f"Warnlevel for user {user_id} reduced from {warnlevel} to {new_warnlevel}")    
+    
+    tasks.loop(hours=24)
+    async def sync_users(self):
+        """Synchronisiert die Benutzerdatenbank mit den Mitgliedern des Servers."""
+        guild = self.bot.get_guild(854698446996766730)
+        members = guild.members
+
+        cursor = self.db.connection.cursor()
+
+        for member in members:
+            # Überprüfen, ob der Benutzer bereits in der Tabelle Users existiert
+            cursor.execute("SELECT ID, USERNAME FROM USER WHERE DISCORDID = ?", (str(member.id),))
+            result = cursor.fetchone()
+
+            if not result:
+                # Benutzer existiert nicht, füge ihn in die Tabelle Users ein
+                cursor.execute("INSERT INTO USER (DISCORDID, USERNAME) VALUES (?, ?)", (str(member.id), member.name))
+                self.db.connection.commit()
+            else:
+                # Benutzer existiert, überprüfe den Benutzernamen
+                user_id, db_username = result
+                if db_username != member.name:
+                    # Benutzername ist nicht korrekt, aktualisiere ihn
+                    cursor.execute("UPDATE USER SET USERNAME = ? WHERE ID = ?", (member.name, user_id))
+                    self.db.connection.commit()
+
 
 def setupGlobal(bot):
     bot.add_cog(Globalfile(bot))

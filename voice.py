@@ -7,15 +7,20 @@ from globalfile import Globalfile
 class VoiceLogging(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.globalfile_instance = Globalfile(bot)
         self.logger = logging.getLogger("Voice")
-        formatter = logging.Formatter('[%(asctime)s - %(name)s - %(levelname)s]: %(message)s')
-        handler = logging.StreamHandler()
-        handler.setFormatter(formatter)
-        self.logger.addHandler(handler)        
+        self.logger.setLevel(logging.INFO)
+        self.globalfile_instance = Globalfile(bot)        
+
+        # Überprüfen, ob der Handler bereits hinzugefügt wurde
+        if not self.logger.handlers:
+            formatter = logging.Formatter('[%(asctime)s - %(name)s - %(levelname)s]: %(message)s')
+            handler = logging.StreamHandler()
+            handler.setFormatter(formatter)
+            self.logger.addHandler(handler)
+ 
 
     @commands.Cog.listener()
-    async def on_voice_state_update(self, member: disnake.member, before, after):
+    async def on_voice_state_update(self, member: disnake.member, before: disnake.VoiceState, after: disnake.VoiceState):
         # Überprüfen, ob der Benutzer einen Voice-Channel betritt
         embed = None
         avatar_url = member.avatar.url if member.avatar else member.default_avatar.url
