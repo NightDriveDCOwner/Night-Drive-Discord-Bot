@@ -257,7 +257,7 @@ class Globalfile(commands.Cog):
 
             if last_warn_date and datetime.strptime(last_warn_date, '%Y-%m-%d %H:%M:%S') < four_months_ago:
                 # Überprüfe, wann die letzte System-Note für die Reduzierung des Warnlevels war
-                cursor.execute("SELECT MAX(INSERTDATE) FROM NOTE WHERE USERID = ? AND NOTE LIKE 'System Note: Warnlevel reduced%'", (user_id,))
+                cursor.execute("SELECT MAX(INSERT_DATE) FROM NOTE WHERE USERID = ? AND NOTE LIKE 'System Note: Warnlevel reduced%'", (user_id,))
                 last_note_date = cursor.fetchone()[0]
 
                 if not last_note_date or datetime.strptime(last_note_date, '%Y-%m-%d %H:%M:%S') < four_months_ago:
@@ -268,7 +268,7 @@ class Globalfile(commands.Cog):
 
                     # Füge eine System-Note hinzu
                     system_note = f"System Note: Warnlevel reduced from {warnlevel} to {new_warnlevel}"
-                    cursor.execute("INSERT INTO NOTE (NOTE, USERID, INSERTDATE) VALUES (?, ?, ?)", (system_note, user_id, current_time.strftime('%Y-%m-%d %H:%M:%S')))
+                    cursor.execute("INSERT INTO NOTE (NOTE, USERID, INSERT_DATE) VALUES (?, ?, ?)", (system_note, user_id, current_time.strftime('%Y-%m-%d %H:%M:%S')))
                     self.db.connection.commit()
 
                     self.logger.info(f"Warnlevel for user {user_id} reduced from {warnlevel} to {new_warnlevel}")    

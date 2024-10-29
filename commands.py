@@ -325,7 +325,7 @@ class MyCommands(commands.Cog):
 
         cursor = self.db.connection.cursor()
         current_datetime = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        cursor.execute("INSERT INTO NOTE (NOTE, USERID, IMAGEPATH, INSERTDATE) VALUES (?, ?, ?, ?)", (reason, userrecord['ID'], image_path, current_datetime))
+        cursor.execute("INSERT INTO NOTE (NOTE, USERID, IMAGEPATH, INSERT_DATE) VALUES (?, ?, ?, ?)", (reason, userrecord['ID'], image_path, current_datetime))
         self.db.connection.commit()
 
         # Hole die zuletzt eingefügte ID
@@ -419,7 +419,7 @@ class MyCommands(commands.Cog):
     @commands.slash_command(guild_ids=[854698446996766730])
     @RoleHierarchy.check_permissions("Sr. Supporter")
     async def warn_delete(self, inter: disnake.ApplicationCommandInteraction, caseid: int):
-        """Löscht eine Warn basierend auf der Warn ID."""
+        """Löscht eine Warn basierend auf der Warn ID und setzt das Warnlevel zurück."""
         await inter.response.defer()        
         try:
             cursor = self.db.connection.cursor()
@@ -432,11 +432,22 @@ class MyCommands(commands.Cog):
                 self.logger.info(f"Warn not found: {caseid}")
                 return
 
+            user_id = warn[1]  # Assuming USERID is the second column in WARN table
+            warn_level = warn[4]  # Assuming LEVEL is the fifth column in WARN table
+
+            # Reduziere das Warnlevel des Benutzers
+            cursor.execute("SELECT WARNLEVEL FROM USER WHERE ID = ?", (user_id,))
+            current_warn_level = cursor.fetchone()[0]
+            new_warn_level = max(0, current_warn_level - warn_level)
+            cursor.execute("UPDATE USER SET WARNLEVEL = ? WHERE ID = ?", (new_warn_level, user_id))
+            self.db.connection.commit()
+
+            # Lösche die Warnung
             cursor.execute("DELETE FROM WARN WHERE ID = ?", (caseid,))
             self.db.connection.commit()
 
-            embed = disnake.Embed(title="Warn gelöscht", description=f"Warn mit der ID {caseid} wurde gelöscht.", color=disnake.Color.green())
-            self.logger.info(f"Warn deleted: {caseid}")
+            embed = disnake.Embed(title="Warn gelöscht", description=f"Warn mit der ID {caseid} wurde gelöscht und das Warnlevel wurde angepasst.", color=disnake.Color.green())
+            self.logger.info(f"Warn deleted: {caseid}, Warnlevel adjusted for user {user_id}")
             await inter.edit_original_response(embed=embed)
         except sqlite3.Error as e:
             embed = disnake.Embed(title="Fehler", description=f"Ein Fehler ist aufgetreten: {e}", color=disnake.Color.red())

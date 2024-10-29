@@ -148,7 +148,7 @@ class Reaction(commands.Cog):
                     else:
                         image_path_fields = ""
                         image_path_values = ""
-                    query = f"INSERT INTO MESSAGE (CONTENT, USERID, CHANNELID, MESSAGEID, MESSAGE_BEFORE, INSERTDATE{image_path_fields}) VALUES (?, ?, ?, ?, ?, ?{image_path_values})"
+                    query = f"INSERT INTO MESSAGE (CONTENT, USERID, CHANNELID, MESSAGEID, MESSAGE_BEFORE, INSERT_DATE{image_path_fields}) VALUES (?, ?, ?, ?, ?, ?{image_path_values})"
                     cursor.execute(query, (after.content, userrecord['ID'], after.channel.id, after.id, message_before_id, current_datetime, *image_paths))
                     self.db.connection.commit()
                     await channel.send(embed=embed)                    
