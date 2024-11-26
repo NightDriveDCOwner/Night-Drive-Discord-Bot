@@ -39,9 +39,29 @@ class Join(commands.Cog):
             await member.add_roles(frischling, info, hobbies, games, other, verify)
             embed = disnake.Embed(title=f"Herzlich Willkommen!", color=0x6495ED)
             embed.set_author(name="Aincrad", icon_url=guild.icon.url)
-            embed.description = f"Ein wildes {member.mention} ist aufgetaucht, willkommen bei uns auf **Aincrad!**\nIn <#1039167130190491709> kannst du dir deine eigenen Rollen vergeben.\nIn <#1039167960012554260> kannst du dich nach Möglichkeit vorstellen damit die anderen wissen wer du bist."
+            embed.description = (
+                f"Ein wildes {member.mention} ist aufgetaucht, willkommen bei uns auf **Aincrad!**\n"
+                f"In <#1039167130190491709> kannst du dir deine eigenen Rollen vergeben.\n"
+                f"In <#1039167960012554260> kannst du dich nach Möglichkeit vorstellen damit die anderen wissen wer du bist."
+            )
+            embed.set_image(url="https://media1.tenor.com/m/7-CNilpY-l8AAAAd/link-start-sao.gif")
             channel = guild.get_channel(854698447247769630)
             await channel.send(embed=embed)
+
+            # Füge den neuen Benutzer zur USER-Tabelle hinzu
+            cursor = self.db.connection.cursor()
+            cursor.execute("SELECT ID FROM USER WHERE DISCORDID = ?", (str(member.id),))
+            result = cursor.fetchone()
+
+            if not result:
+                cursor.execute("INSERT INTO USER (DISCORDID, USERNAME) VALUES (?, ?)", (str(member.id), member.name))
+                self.db.connection.commit()
+                self.logger.info(f"Neuer Benutzer {member.name} (ID: {member.id}) zur USER-Tabelle hinzugefügt.")
+            else:
+                self.logger.info(f"Benutzer {member.name} (ID: {member.id}) existiert bereits in der USER-Tabelle.")
+
+        except Exception as e:
+            self.logger.critical(f"Fehler beim Hinzufügen der Rollen: {e}")
                         
         except Exception as e:
             self.logger.critical(f"Fehler beim Hinzufügen der Rollen: {e}")

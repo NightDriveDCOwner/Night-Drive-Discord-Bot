@@ -12,11 +12,16 @@ class Moderation(commands.Cog):
         self.message = disnake.message
         self.userid = int
         self.logger = logging.getLogger("Moderation")
-        formatter = logging.Formatter('[%(asctime)s - %(name)s - %(levelname)s]: %(message)s')
-        handler = logging.StreamHandler()
-        handler.setFormatter(formatter)
-        self.logger.addHandler(handler)
-        self.db = DatabaseConnection()               
+        self.db = DatabaseConnection()        
+        logging_level = os.getenv("LOGGING_LEVEL", "INFO").upper() 
+        self.logger.setLevel(logging_level)
+                
+        if not self.logger.handlers:
+            formatter = logging.Formatter('[%(asctime)s - %(name)s - %(levelname)s]: %(message)s')
+            handler = logging.StreamHandler()
+            handler.setFormatter(formatter)
+            self.logger.addHandler(handler)
+               
 
     def add_user_to_badwords_times(user_id: int):
         expiry_time = time.time() + 24 * 60 * 60 # 24 Stunden ab jetzt

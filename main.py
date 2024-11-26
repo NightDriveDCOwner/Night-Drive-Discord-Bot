@@ -8,6 +8,8 @@ from moderation import setupModeration
 import disnake
 import logging
 import asyncio
+import os
+from dotenv import load_dotenv
 
 class DiscordLoggingHandler(logging.Handler):
     def __init__(self, bot, user_id):
@@ -29,7 +31,8 @@ root_logger = logging.getLogger()
 for handler in root_logger.handlers[:]:
     root_logger.removeHandler(handler)
 
-logging.basicConfig(level=logging.INFO, filename="log.log", filemode="w", format="%(asctime)s - %(levelname)s - %(message)s")
+logging_level = os.getenv("LOGGING_LEVEL", "DEBUG").upper()
+logging.basicConfig(level=logging_level, filename="log.log", filemode="w", format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 formatter = logging.Formatter('[%(asctime)s - %(name)s - %(levelname)s]: %(message)s')
 
