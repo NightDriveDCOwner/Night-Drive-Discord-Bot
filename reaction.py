@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timedelta
 from moderation import Moderation
 import logging
 from DBConnection import DatabaseConnection
+import os
 
 class Reaction(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -18,7 +19,8 @@ class Reaction(commands.Cog):
         self.globalfile_instance = Globalfile(bot)   
         self.moderation = Moderation(bot)    
         self.logger = logging.getLogger("Reaction")
-        self.logger.setLevel(logging.INFO)
+        logging_level = os.getenv("LOGGING_LEVEL", "INFO").upper() 
+        self.logger.setLevel(logging_level)    
         self.globalfile = Globalfile(bot)        
         self.db = DatabaseConnection()
 
@@ -148,7 +150,7 @@ class Reaction(commands.Cog):
                     else:
                         image_path_fields = ""
                         image_path_values = ""
-                    query = f"INSERT INTO MESSAGE (CONTENT, USERID, CHANNELID, MESSAGEID, MESSAGE_BEFORE, INSERTDATE{image_path_fields}) VALUES (?, ?, ?, ?, ?, ?{image_path_values})"
+                    query = f"INSERT INTO MESSAGE (CONTENT, USERID, CHANNELID, MESSAGEID, MESSAGE_BEFORE, INSERT_DATE{image_path_fields}) VALUES (?, ?, ?, ?, ?, ?{image_path_values})"
                     cursor.execute(query, (after.content, userrecord['ID'], after.channel.id, after.id, message_before_id, current_datetime, *image_paths))
                     self.db.connection.commit()
                     await channel.send(embed=embed)                    

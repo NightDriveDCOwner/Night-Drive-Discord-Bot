@@ -3,12 +3,14 @@ from disnake.ext import commands
 from datetime import datetime, timedelta
 import logging
 from globalfile import Globalfile
+import os
 
 class VoiceLogging(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.logger = logging.getLogger("Voice")
-        self.logger.setLevel(logging.INFO)
+        logging_level = os.getenv("LOGGING_LEVEL", "INFO").upper() 
+        self.logger.setLevel(logging_level)
         self.globalfile_instance = Globalfile(bot)        
 
         # Überprüfen, ob der Handler bereits hinzugefügt wurde

@@ -1,5 +1,6 @@
 import disnake, logging
 from functools import wraps
+import os
 
 class RoleHierarchy:
         def __init__(self):
@@ -16,10 +17,14 @@ class RoleHierarchy:
                 "Owner"
             ]
             self.logger = logging.getLogger("RoleHierarchy")
-            formatter = logging.Formatter('[%(asctime)s - %(name)s - %(levelname)s]: %(message)s')
-            handler = logging.StreamHandler()
-            handler.setFormatter(formatter)
-            self.logger.addHandler(handler)
+            logging_level = os.getenv("LOGGING_LEVEL", "INFO").upper() 
+            self.logger.setLevel(logging_level)
+                        
+            if not self.logger.handlers:
+                formatter = logging.Formatter('[%(asctime)s - %(name)s - %(levelname)s]: %(message)s')
+                handler = logging.StreamHandler()
+                handler.setFormatter(formatter)
+                self.logger.addHandler(handler)
 
 
         def has_role_or_higher(self, member: disnake.Member, role_name: str) -> bool:

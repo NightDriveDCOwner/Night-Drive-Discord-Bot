@@ -6,10 +6,12 @@ import re
 from globalfile import Globalfile
 from RoleHierarchy import RoleHierarchy
 from datetime import datetime, timedelta, timedelta
+from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 import logging
 import sqlite3
 from DBConnection import DatabaseConnection
+import asyncio
 
 
 
@@ -22,11 +24,13 @@ class MyCommands(commands.Cog):
 
         # Logger initialisieren
         self.logger = logging.getLogger("Commands")
-        self.logger.setLevel(logging.INFO)
+        logging_level = os.getenv("LOGGING_LEVEL", "INFO").upper()         
+        self.logger.setLevel(logging_level)
         self.globalfile = Globalfile(bot)        
 
         # Überprüfen, ob der Handler bereits hinzugefügt wurde
         if not self.logger.handlers:
+          
             formatter = logging.Formatter('[%(asctime)s - %(name)s - %(levelname)s]: %(message)s')
             handler = logging.StreamHandler()
             handler.setFormatter(formatter)
@@ -325,7 +329,7 @@ class MyCommands(commands.Cog):
 
         cursor = self.db.connection.cursor()
         current_datetime = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        cursor.execute("INSERT INTO NOTE (NOTE, USERID, IMAGEPATH, INSERTDATE) VALUES (?, ?, ?, ?)", (reason, userrecord['ID'], image_path, current_datetime))
+        cursor.execute("INSERT INTO NOTE (NOTE, USERID, IMAGEPATH, INSERT_DATE) VALUES (?, ?, ?, ?)", (reason, userrecord['ID'], image_path, current_datetime))
         self.db.connection.commit()
 
         # Hole die zuletzt eingefügte ID
@@ -419,7 +423,7 @@ class MyCommands(commands.Cog):
     @commands.slash_command(guild_ids=[854698446996766730])
     @RoleHierarchy.check_permissions("Sr. Supporter")
     async def warn_delete(self, inter: disnake.ApplicationCommandInteraction, caseid: int):
-        """Löscht eine Warn basierend auf der Warn ID."""
+        """Löscht eine Warn basierend auf der Warn ID und setzt das Warnlevel zurück."""
         await inter.response.defer()        
         try:
             cursor = self.db.connection.cursor()
@@ -432,11 +436,22 @@ class MyCommands(commands.Cog):
                 self.logger.info(f"Warn not found: {caseid}")
                 return
 
+            user_id = warn[1]  # Assuming USERID is the second column in WARN table
+            warn_level = warn[4]  # Assuming LEVEL is the fifth column in WARN table
+
+            # Reduziere das Warnlevel des Benutzers
+            cursor.execute("SELECT WARNLEVEL FROM USER WHERE ID = ?", (user_id,))
+            current_warn_level = cursor.fetchone()[0]
+            new_warn_level = max(0, current_warn_level - warn_level)
+            cursor.execute("UPDATE USER SET WARNLEVEL = ? WHERE ID = ?", (new_warn_level, user_id))
+            self.db.connection.commit()
+
+            # Lösche die Warnung
             cursor.execute("DELETE FROM WARN WHERE ID = ?", (caseid,))
             self.db.connection.commit()
 
-            embed = disnake.Embed(title="Warn gelöscht", description=f"Warn mit der ID {caseid} wurde gelöscht.", color=disnake.Color.green())
-            self.logger.info(f"Warn deleted: {caseid}")
+            embed = disnake.Embed(title="Warn gelöscht", description=f"Warn mit der ID {caseid} wurde gelöscht und das Warnlevel wurde angepasst.", color=disnake.Color.green())
+            self.logger.info(f"Warn deleted: {caseid}, Warnlevel adjusted for user {user_id}")
             await inter.edit_original_response(embed=embed)
         except sqlite3.Error as e:
             embed = disnake.Embed(title="Fehler", description=f"Ein Fehler ist aufgetreten: {e}", color=disnake.Color.red())
@@ -472,9 +487,11 @@ class MyCommands(commands.Cog):
         embed.set_author(name=user.name, icon_url=user.avatar.url if user.avatar else user.default_avatar.url)
 
         # Füge Benutzerinformationen hinzu
-        embed.add_field(name="User ID", value=user_info[0], inline=False)        
-        embed.add_field(name="Discord ID", value=user_info[1], inline=False)
-        embed.add_field(name="Benutzername", value=user_info[2], inline=False)        
+        # embed.add_field(name="User ID", value=user_info[0], inline=False)        
+        # embed.add_field(name="Discord ID", value=user_info[1], inline=False)
+        # embed.add_field(name="Benutzername", value=user_info[2], inline=False)   
+        current_time = datetime.now().strftime('%H:%M:%S')
+        embed.set_footer(text=f"ID: {user_info[1]} | {user_info[0]} - heute um {(current_time + timedelta(hours=1))} Uhr") 
 
 
         # Füge Notizen hinzu
@@ -619,6 +636,97 @@ class MyCommands(commands.Cog):
             await inter.edit_original_response(content=f"Alle gebannten Benutzer wurden entbannt. Anzahl der entbannten Benutzer: {unbanned_count}")
         except disnake.HTTPException as e:
             await inter.edit_original_response(content=f"Ein Fehler ist aufgetreten: {e}")
+  
+    @commands.slash_command(guild_ids=[854698446996766730])
+    @RoleHierarchy.check_permissions("Leitung")
+    async def kick_inactive_users(self, inter: disnake.ApplicationCommandInteraction, months: int, execute: bool = False):
+        """Kicke alle Benutzer, die innerhalb der angegebenen Monate keine Nachrichten geschrieben haben."""
+        await inter.response.defer()
+        await inter.edit_original_response(content=f"Starte das Überprüfen von inaktiven Benutzern, die in den letzten {months} Monaten nichts geschrieben haben.")
+        await self.kick_inactive_users_task(inter, months, execute)
 
+    async def kick_inactive_users_task(self, inter: disnake.ApplicationCommandInteraction, months: int, execute: bool):
+        guild = inter.guild
+        cutoff_date = datetime.now(timezone.utc) - timedelta(days=months*30)
+        inactive_users = []
+        kicked_users = []
+        failed_kicks = []
+        self.logger.info(f"Starte Kick-Prozess für inaktive Benutzer, die in den letzten {months} Monaten nichts geschrieben haben...")   
+
+        semaphore = asyncio.Semaphore(500)
+        tasks = []
+        for member in guild.members:
+            if not member.bot:
+                tasks.append(self.check_user_activity(member, guild, cutoff_date, semaphore))
+
+        results = await asyncio.gather(*tasks)
+
+        for member, last_message_date in results:
+            if last_message_date is None or last_message_date < cutoff_date:
+                inactive_users.append(member)
+
+        self.logger.info(f"Lesevorgang abgeschlossen. {len(inactive_users)} inaktive Benutzer gefunden, die gekickt werden sollen.")                
+
+        for member in inactive_users:
+            if execute:
+                try:
+                    await member.kick(reason=f"Inaktiv für {months} Monate")
+                    kicked_users.append(member)
+                    self.logger.info(f"User {member.name} (ID: {member.id}) wurde gekickt.")
+                    # Sende Nachricht an den Benutzer
+                    invite = await guild.text_channels[0].create_invite(max_uses=1, unique=True)
+                    embed = disnake.Embed(title="Du wurdest gekickt", color=disnake.Color.red())
+                    embed.add_field(name="Grund", value=f"Inaktiv für {months} Monate", inline=False)
+                    embed.add_field(name="Wiederbeitreten", value=f"[Hier klicken]({invite.url}) um dem Server wieder beizutreten.", inline=False)
+                    try:
+                        await member.send(embed=embed)
+                    except disnake.Forbidden:
+                        self.logger.warning(f"Keine Berechtigung, Nachricht an {member.name} (ID: {member.id}) zu senden.")
+                except disnake.Forbidden:
+                    failed_kicks.append(member)
+                    self.logger.warning(f"Keine Berechtigung, {member.name} (ID: {member.id}) zu kicken.")
+                except disnake.HTTPException as e:
+                    failed_kicks.append(member)
+                    self.logger.error(f"Fehler beim Kicken von {member.name} (ID: {member.id}): {e}")
+            else:
+                kicked_users.append(member)
+
+        embed = disnake.Embed(title="Kick Inaktive Benutzer", color=disnake.Color.red())
+        embed.add_field(name="Anzahl der gekickten Benutzer", value=len(kicked_users), inline=False)
+        if kicked_users:
+            kicked_list = "\n".join([f"{member.name} (ID: {member.id})" for member in kicked_users])
+            embed.add_field(name="Gekickte Benutzer" if execute else "Benutzer, die gekickt werden würden", value=kicked_list, inline=False)
+        if failed_kicks:
+            failed_list = "\n".join([f"{member.name} (ID: {member.id})" for member in failed_kicks])
+            embed.add_field(name="Fehlgeschlagene Kicks", value=failed_list, inline=False)
+
+        await inter.edit_original_response(embed=embed)
+        self.logger.info(f"Kick-Prozess abgeschlossen. {len(kicked_users)} Benutzer wurden gekickt." if execute else f"{len(kicked_users)} Benutzer würden gekickt werden.")
+
+    async def check_user_activity(self, member, guild, cutoff_date, semaphore):
+        async with semaphore:
+            self.logger.debug(f"Überprüfe Aktivität von Benutzer {member.name} (ID: {member.id})...")
+            last_message_date = datetime(1970, 1, 1, tzinfo=timezone.utc)
+            for channel in guild.text_channels:
+                try:
+                    async for message in channel.history(limit=None):
+                        if message.created_at < cutoff_date:
+                            break
+                        if message.author.id == member.id:
+                            last_message_date = message.created_at
+                            self.logger.debug(f"Benutzer {member.name} (ID: {member.id}) hat zuletzt am {last_message_date} geschrieben.")                            
+                            break
+                    if last_message_date != datetime(1970, 1, 1, tzinfo=timezone.utc):
+                        break                    
+                except Exception as e:
+                    self.logger.warning(f"Fehler beim Durchsuchen der Nachrichten in Kanal {channel.name}: {e}")
+                    continue                        
+        
+        if last_message_date == datetime(1970, 1, 1, tzinfo=timezone.utc):
+            last_message_date = None
+            self.logger.debug(f"Benutzer {member.name} (ID: {member.id}) hat in den angegebenen Monaten keine Nachrichten geschrieben.")
+        
+        return member, last_message_date
+        
 def setup(bot: commands.Bot):
     bot.add_cog(MyCommands(bot))

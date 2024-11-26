@@ -24,9 +24,10 @@ class Globalfile(commands.Cog):
             self.TimerMustReseted = True
             self.UserRecord = namedtuple('UserRecord', ['user','username','userid'])
             self.db = DatabaseConnection()             
-            
+        
+        logging_level = os.getenv("LOGGING_LEVEL", "INFO").upper()                    
         self.logger = logging.getLogger("Globalfile")
-        self.logger.setLevel(logging.INFO)           
+        self.logger.setLevel(logging_level)           
 
         # Überprüfen, ob der Handler bereits hinzugefügt wurde
         if not self.logger.handlers:
@@ -81,20 +82,44 @@ class Globalfile(commands.Cog):
     async def unban_task(self):
         """Überprüft regelmäßig die Banndauer und entbannt Benutzer, deren Banndauer abgelaufen ist."""
         cursor = self.db.connection.cursor()
-        cursor.execute("SELECT USERID, BANNEDTO FROM BAN WHERE UNBAN = 0")
+        cursor.execute("""
+            SELECT BAN.USERID, BAN.BANNEDTO, USER.DISCORDID 
+            FROM BAN 
+            JOIN USER ON BAN.USERID = USER.ID 
+            WHERE BAN.UNBAN = 0
+        """)
         bans = cursor.fetchall()
 
         for ban in bans:
-            user_id, ban_end_timestamp = ban
-            if ban_end_timestamp and datetime.now().timestamp() > ban_end_timestamp:
-                # Banndauer ist abgelaufen, Benutzer entbannen
-                guild = self.bot.get_guild(854698446996766730)  # Ersetzen Sie dies durch die tatsächliche ID Ihres Servers
-                user = await self.bot.fetch_user(user_id)
-                await guild.unban(user)
-                cursor.execute("UPDATE BAN SET UNBAN = 1 WHERE USERID = ?", (user_id,))
-                self.db.connection.commit()
-                self.logger.info(f"User {user_id} wurde automatisch entbannt.")
-        
+            user_id, ban_end_timestamp, discordid = ban
+            if ban_end_timestamp:
+                # Konvertiere ban_end_timestamp von einem String zu einem Float
+                ban_end_timestamp = float(ban_end_timestamp)
+                # Konvertiere den Unix-Timestamp in ein datetime-Objekt
+                ban_end_datetime = datetime.fromtimestamp(ban_end_timestamp)
+                if datetime.now() > ban_end_datetime:
+                    # Banndauer ist abgelaufen, Benutzer entbannen
+                    guild = self.bot.get_guild(854698446996766730)  # Ersetzen Sie dies durch die tatsächliche ID Ihres Servers
+                    if guild is None:
+                        self.logger.error(f"Guild mit ID 854698446996766730 konnte nicht gefunden werden.")
+                        # Debugging: Liste alle Gilden auf, die der Bot geladen hat
+                        self.logger.debug(f"Geladene Gilden: {[g.id for g in self.bot.guilds]}")
+                        continue
+                    try:
+                        # Überprüfen, ob der Benutzer tatsächlich gebannt ist
+                        async for ban_entry in guild.bans():
+                            if ban_entry.user.id == int(discordid):
+                                # Unban den Benutzer direkt mit der Benutzer-ID
+                                await guild.unban(disnake.Object(id=int(discordid)))
+                                cursor.execute("UPDATE BAN SET UNBAN = 1 WHERE USERID = ?", (user_id,))
+                                self.db.connection.commit()
+                                self.logger.info(f"User {user_id} mit DiscordID {discordid} wurde automatisch entbannt.")
+                        else:
+                            self.logger.warning(f"User {user_id} mit DiscordID {discordid} ist nicht gebannt.")
+                    except disnake.NotFound:
+                        self.logger.warning(f"User {user_id} mit DiscordID {discordid} konnte nicht gefunden werden.")
+                    except Exception as e:
+                        self.logger.error(f"Fehler beim Entbannen von User {user_id} mit DiscordID {discordid}: {e}")
 
     def get_user_record(self, user_id: int = None, username: str = "", discordid: str = "") -> dict:
         """Holt die ID, den Benutzernamen und die Discord-ID des Datensatzes aus der Tabelle User basierend auf Benutzername und User ID."""
@@ -257,7 +282,7 @@ class Globalfile(commands.Cog):
 
             if last_warn_date and datetime.strptime(last_warn_date, '%Y-%m-%d %H:%M:%S') < four_months_ago:
                 # Überprüfe, wann die letzte System-Note für die Reduzierung des Warnlevels war
-                cursor.execute("SELECT MAX(INSERTDATE) FROM NOTE WHERE USERID = ? AND NOTE LIKE 'System Note: Warnlevel reduced%'", (user_id,))
+                cursor.execute("SELECT MAX(INSERT_DATE) FROM NOTE WHERE USERID = ? AND NOTE LIKE 'System Note: Warnlevel reduced%'", (user_id,))
                 last_note_date = cursor.fetchone()[0]
 
                 if not last_note_date or datetime.strptime(last_note_date, '%Y-%m-%d %H:%M:%S') < four_months_ago:
@@ -268,7 +293,7 @@ class Globalfile(commands.Cog):
 
                     # Füge eine System-Note hinzu
                     system_note = f"System Note: Warnlevel reduced from {warnlevel} to {new_warnlevel}"
-                    cursor.execute("INSERT INTO NOTE (NOTE, USERID, INSERTDATE) VALUES (?, ?, ?)", (system_note, user_id, current_time.strftime('%Y-%m-%d %H:%M:%S')))
+                    cursor.execute("INSERT INTO NOTE (NOTE, USERID, INSERT_DATE) VALUES (?, ?, ?)", (system_note, user_id, current_time.strftime('%Y-%m-%d %H:%M:%S')))
                     self.db.connection.commit()
 
                     self.logger.info(f"Warnlevel for user {user_id} reduced from {warnlevel} to {new_warnlevel}")    
@@ -298,6 +323,18 @@ class Globalfile(commands.Cog):
                     cursor.execute("UPDATE USER SET USERNAME = ? WHERE ID = ?", (member.name, user_id))
                     self.db.connection.commit()
 
+    @tasks.loop(minutes=1)
+    async def track_voice_minutes(self):
+        """Überprüft jede Minute, wer sich in den Voice-Channels befindet, und erhöht den Wert TOTALVOICEMIN in der Tabelle USER."""
+        guild = self.bot.get_guild(854698446996766730)  # Ersetzen Sie dies durch die tatsächliche ID Ihres Servers
+        if guild:
+            cursor = self.db.connection.cursor()
+            for channel in guild.voice_channels:
+                for member in channel.members:
+                    userrecord = self.get_user_record(discordid=member.id)
+                    if userrecord:
+                        cursor.execute("UPDATE USER SET TOTALVOICEMIN = TOTALVOICEMIN + 1 WHERE ID = ?", (userrecord['ID'],))
+            self.db.connection.commit()
 
 def setupGlobal(bot):
     bot.add_cog(Globalfile(bot))
