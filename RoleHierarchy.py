@@ -1,5 +1,6 @@
 import disnake, logging
 from functools import wraps
+import os
 
 class RoleHierarchy:
         def __init__(self):
