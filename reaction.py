@@ -5,7 +5,7 @@ from collections import namedtuple
 import disnake.message
 import disnake.audit_logs
 from disnake.ext import commands
-from datetime import datetime, timedelta, timedelta
+from datetime import datetime, timedelta, timedelta, timezone
 from moderation import Moderation
 import logging
 from DBConnection import DatabaseConnection
@@ -57,7 +57,7 @@ class Reaction(commands.Cog):
                             userrecord = self.globalfile.get_user_record(discordid=member.id)
                             # Speichern der Nachricht in der Datenbank
                             cursor = self.db.connection.cursor()
-                            current_datetime = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                            current_datetime = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
                             image_paths = [attachment.url for attachment in message.attachments]
                             if len(image_paths) != 0:
                                 image_path_fields = ", " + ', '.join([f"IMAGEPATH{i+1}" for i in range(len(image_paths))])
@@ -70,7 +70,7 @@ class Reaction(commands.Cog):
                             self.db.connection.commit()
                             await channel.send(embed=embed)
         except Exception as e:
-            self.logger.critical(f"Fehler aufgetreten: {e}") 
+            self.logger.critical(f"Fehler aufgetreten [on_message]: {e}") 
 
     @commands.Cog.listener()
     async def on_message_delete(self, message: disnake.Message):      
@@ -83,7 +83,7 @@ class Reaction(commands.Cog):
                         User = await self.globalfile_instance.admin_did_something(disnake.AuditLogAction.message_delete, member)
                         avatar_url = member.avatar.url if member.avatar else member.default_avatar.url
 
-                        current_datetime = datetime.now()
+                        current_datetime = datetime.now(timezone.utc)
                         
                         self.logger.info(f"Nachricht von Server {message.guild.name} deleted: Channel: {message.channel.name}. Username: {member.name}, Userid: {member.id}, Content: {message.content}, Message deleted by: {User.username}, User ID: {str(User.userid)}")                                  
                         embed = disnake.Embed(title=f"Message deleted in <#{message.channel.id}>!", color=0xFF0000)                                                 
@@ -110,7 +110,7 @@ class Reaction(commands.Cog):
                         self.db.connection.commit()
                         await channel.send(embed=embed)                        
                     except Exception as e:
-                        self.logger.critical(f"Fehler aufgetreten: {e}")  
+                        self.logger.critical(f"Fehler aufgetreten [on_message_delete]: {e}")  
 
     @commands.Cog.listener()
     async def on_message_edit(self, before: disnake.Message, after: disnake.Message):
@@ -120,7 +120,7 @@ class Reaction(commands.Cog):
                 member = await self.globalfile.get_member_from_user(before.author, before.guild.id)
                 if member and before.channel.id != 1208770898832658493 and before.channel.id != 1219347644640530553 and botrolle not in member.roles:                                              
                     avatar_url = member.avatar.url if member.avatar else member.default_avatar.url
-                    current_datetime = datetime.now()
+                    current_datetime = datetime.now(timezone.utc)
 
                     self.logger.info(f"Nachricht von Server {before.guild.name} edited: Channel {after.channel.name}, Username: {member.name}, Userid: {member.id}, Content before: {before.content}, Content after: {after.content}")
                     embed = disnake.Embed(title=f"Message edited in <#{after.channel.id}>!", color=0xFFA500)
@@ -142,7 +142,7 @@ class Reaction(commands.Cog):
                     
                     userrecord = self.globalfile.get_user_record(discordid=member.id)
                     # Speichern der bearbeiteten Nachricht in der Datenbank
-                    current_datetime = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    current_datetime = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
                     image_paths = [attachment.url for attachment in after.attachments]
                     if len(image_paths) != 0:
                         image_path_fields = ", " + ', '.join([f"IMAGEPATH{i+1}" for i in range(len(image_paths))])
@@ -155,7 +155,7 @@ class Reaction(commands.Cog):
                     self.db.connection.commit()
                     await channel.send(embed=embed)                    
         except Exception as e:
-            self.logger.critical(f"Fehler aufgetreten: {e}")
+            self.logger.critical(f"Fehler aufgetreten [on_message_edit]: {e}")
 
     @commands.Cog.listener()
     async def on_member_update(self, before: disnake.Member, after: disnake.Member):
@@ -171,7 +171,7 @@ class Reaction(commands.Cog):
                 for role in removed_roles:
                     self.logger.info(f"Rolle entfernt: {role.name} von {after.name} ({after.id})")
 
-                current_datetime = datetime.now()
+                current_datetime = datetime.now(timezone.utc)
                 log_channel_id = 1221018527289577582
                 log_channel = self.bot.get_channel(log_channel_id)
                 if log_channel:
@@ -184,13 +184,28 @@ class Reaction(commands.Cog):
                             embed.add_field(name="Hinzugefügte Rollen", value=", ".join([role.mention for role in added_roles]), inline=False)
                         if removed_roles:
                             embed.add_field(name="Entfernte Rollen", value=", ".join([role.mention for role in removed_roles]), inline=False)                        
-                        embed.set_footer(text=f"ID: {before.id} - heute um {(current_datetime + timedelta(hours=1)).strftime('%H:%M:%S')} Uhr")
+                        embed.set_footer(text=f"ID: {before.id} - heute um {(current_datetime).strftime('%H:%M:%S')} Uhr")
                         await log_channel.send(embed=embed)
 
         except Exception as e:
-            self.logger.critical(f"Fehler aufgetreten: {e}")     
+            self.logger.critical(f"Fehler aufgetreten [on_member_update]: {e}")     
 
-    
+    @commands.Cog.listener()
+    async def on_member_remove(self, member: disnake.Member):
+        try:
+            current_datetime = datetime.now(timezone.utc)
+            log_channel_id = 854698447113027594  # Replace with your log channel ID
+            log_channel = self.bot.get_channel(log_channel_id)
+            if log_channel:
+                embed = disnake.Embed(title="Mitglied hat den Server verlassen", color=0xFF0000)
+                avatar_url = member.avatar.url if member.avatar else member.default_avatar.url
+                embed.set_author(name=member.name, icon_url=avatar_url)
+                embed.add_field(name="Mitglied", value=member.mention, inline=False)
+                embed.set_footer(text=f"ID: {member.id} - heute um {(current_datetime).strftime('%H:%M:%S')} Uhr")
+                await log_channel.send(embed=embed)
+
+        except Exception as e:
+            self.logger.critical(f"Fehler aufgetreten [on_member_remove]: {e}")
 
 def setupReaction(bot):
     bot.add_cog(Reaction(bot))
