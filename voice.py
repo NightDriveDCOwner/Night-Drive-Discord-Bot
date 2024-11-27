@@ -1,6 +1,6 @@
 import disnake
 from disnake.ext import commands
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timedelta, timezone
 import logging
 from globalfile import Globalfile
 import os
@@ -28,7 +28,7 @@ class VoiceLogging(commands.Cog):
         avatar_url = member.avatar.url if member.avatar else member.default_avatar.url
         guild = member.guild
         channel = guild.get_channel(1219347644640530553)
-        current_datetime = datetime.now()
+        current_datetime = datetime.now(timezone.utc)
 
         def create_embed(title, color):
             embed = disnake.Embed(title=title, color=color)
@@ -36,7 +36,7 @@ class VoiceLogging(commands.Cog):
             embed.set_footer(text=f"ID: {member.id} - heute um {(current_datetime + timedelta(hours=1)).strftime('%H:%M:%S')} Uhr")
             return embed
         
-        current_datetime = datetime.now()
+        current_datetime = datetime.now(timezone.utc)
 
         if before.channel is None and after.channel is not None:
             self.logger.info(f"{member.name} hat den Voice-Channel {after.channel.name} betreten.")

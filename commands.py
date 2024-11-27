@@ -5,8 +5,7 @@ import time
 import re
 from globalfile import Globalfile
 from RoleHierarchy import RoleHierarchy
-from datetime import datetime, timedelta, timedelta
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timedelta, timezone
 from dotenv import load_dotenv
 import logging
 import sqlite3
@@ -78,7 +77,7 @@ class MyCommands(commands.Cog):
         # Berechnen der Banndauer
         if duration != "0s":
             duration_seconds = self.globalfile.convert_duration_to_seconds(duration)
-            ban_end_time = datetime.now() + timedelta(seconds=duration_seconds)
+            ban_end_time = datetime.now(timezone.utc) + timedelta(seconds=duration_seconds)
             ban_end_timestamp = int(ban_end_time.timestamp())
             ban_end_formatted = ban_end_time.strftime('%Y-%m-%d %H:%M:%S')
         else:
@@ -328,7 +327,7 @@ class MyCommands(commands.Cog):
         userrecord = self.globalfile.get_user_record(discordid=user.id)
 
         cursor = self.db.connection.cursor()
-        current_datetime = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        current_datetime = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
         cursor.execute("INSERT INTO NOTE (NOTE, USERID, IMAGEPATH, INSERT_DATE) VALUES (?, ?, ?, ?)", (reason, userrecord['ID'], image_path, current_datetime))
         self.db.connection.commit()
 
@@ -343,7 +342,7 @@ class MyCommands(commands.Cog):
         embed.add_field(name="Grund", value=reason, inline=False)
         if image_path:
             embed.add_field(name="Bildpfad", value=image_path, inline=False)
-        embed.set_footer(text=f"ID: {user.id} - heute um {(datetime.now() + timedelta(hours=1)).strftime('%H:%M:%S')} Uhr")
+        embed.set_footer(text=f"ID: {user.id} - heute um {(datetime.now(timezone.utc)).strftime('%H:%M:%S')} Uhr")
         await inter.edit_original_response(embed=embed)
 
     @commands.slash_command(guild_ids=[854698446996766730])
@@ -384,7 +383,7 @@ class MyCommands(commands.Cog):
         userrecord = self.globalfile.get_user_record(discordid=user.id)            
 
         cursor = self.db.connection.cursor()
-        current_datetime = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        current_datetime = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
         cursor.execute("INSERT INTO WARN (USERID, REASON, IMAGEPATH, LEVEL, INSERTDATE) VALUES (?, ?, ?, ?, ?)", (userrecord['ID'], reason, image_path, level, current_datetime))
         self.db.connection.commit()
 
@@ -405,7 +404,7 @@ class MyCommands(commands.Cog):
             user_embed.add_field(name="Warnlevel", value=str(level), inline=False)
             if image_path:
                 user_embed.add_field(name="Bildpfad", value=image_path, inline=False)
-            user_embed.set_footer(text=f"ID: {user.id} - heute um {(datetime.now() + timedelta(hours=1)).strftime('%H:%M:%S')} Uhr")
+            user_embed.set_footer(text=f"ID: {user.id} - heute um {(datetime.now(timezone.utc)).strftime('%H:%M:%S')} Uhr")
             await user.send(embed=user_embed)
         except Exception as e:
             await inter.edit_original_response(content=f"Fehler beim Senden der Warn-Nachricht: {e}")
@@ -417,7 +416,7 @@ class MyCommands(commands.Cog):
         embed.add_field(name="Warnlevel", value=str(level), inline=False)
         if image_path:
             embed.add_field(name="Bildpfad", value=image_path, inline=False)
-        embed.set_footer(text=f"ID: {user.id} - heute um {(datetime.now() + timedelta(hours=1)).strftime('%H:%M:%S')} Uhr")
+        embed.set_footer(text=f"ID: {user.id} - heute um {(datetime.now(timezone.utc)).strftime('%H:%M:%S')} Uhr")
         await inter.edit_original_response(embed=embed)
 
     @commands.slash_command(guild_ids=[854698446996766730])
@@ -490,9 +489,8 @@ class MyCommands(commands.Cog):
         # embed.add_field(name="User ID", value=user_info[0], inline=False)        
         # embed.add_field(name="Discord ID", value=user_info[1], inline=False)
         # embed.add_field(name="Benutzername", value=user_info[2], inline=False)   
-        current_time = datetime.now().strftime('%H:%M:%S')
-        embed.set_footer(text=f"ID: {user_info[1]} | {user_info[0]} - heute um {(current_time + timedelta(hours=1))} Uhr") 
-
+        current_time = datetime.now(timezone.utc)
+        embed.set_footer(text=f"ID: {user_info[1]} | {user_info[0]} - heute um {(current_time + timedelta(hours=1)).strftime('%H:%M:%S')} Uhr") 
 
         # Füge Notizen hinzu
         if notes:
@@ -566,7 +564,7 @@ class MyCommands(commands.Cog):
         cursor = self.db.connection.cursor()
 
         # Berechne das Datum vor sieben Tagen
-        seven_days_ago = datetime.now() - timedelta(days=7)
+        seven_days_ago = datetime.now(timezone.utc) - timedelta(days=7)
 
         # Hole alle Nachrichten aus der Datenbank
         cursor.execute("SELECT MESSAGEID, INSERT_DATE FROM Message")
@@ -643,45 +641,67 @@ class MyCommands(commands.Cog):
         """Kicke alle Benutzer, die innerhalb der angegebenen Monate keine Nachrichten geschrieben haben."""
         await inter.response.defer()
         await inter.edit_original_response(content=f"Starte das Überprüfen von inaktiven Benutzern, die in den letzten {months} Monaten nichts geschrieben haben.")
-        await self.kick_inactive_users_task(inter, months, execute)
+        await self.kick_inactive_users_task(inter, months, execute)       
 
     async def kick_inactive_users_task(self, inter: disnake.ApplicationCommandInteraction, months: int, execute: bool):
+
+        def split_into_chunks(text, max_length):
+            """Splits text into chunks of a maximum length."""
+            return [text[i:i + max_length] for i in range(0, len(text), max_length)]
+
+        def create_embed(title, color, fields):
+            embed = disnake.Embed(title=title, color=color)
+            for name, value in fields:
+                embed.add_field(name=name, value=value, inline=False)
+            return embed  
+              
+        MAX_EMBED_FIELD_LENGTH = 1024
+        MAX_EMBED_TOTAL_LENGTH = 5000 
         guild = inter.guild
         cutoff_date = datetime.now(timezone.utc) - timedelta(days=months*30)
-        inactive_users = []
+        active_users = set()
         kicked_users = []
         failed_kicks = []
         self.logger.info(f"Starte Kick-Prozess für inaktive Benutzer, die in den letzten {months} Monaten nichts geschrieben haben...")   
+        embeds = []
+        current_embed_fields = []
+        current_embed_length = 0
 
         semaphore = asyncio.Semaphore(500)
         tasks = []
-        for member in guild.members:
-            if not member.bot:
-                tasks.append(self.check_user_activity(member, guild, cutoff_date, semaphore))
 
-        results = await asyncio.gather(*tasks)
+        start_time = time.time()  # Startzeit erfassen
 
-        for member, last_message_date in results:
-            if last_message_date is None or last_message_date < cutoff_date:
-                inactive_users.append(member)
+        for channel in guild.text_channels:
+            tasks.append(self.log_active_users(channel, cutoff_date, semaphore, active_users))
 
-        self.logger.info(f"Lesevorgang abgeschlossen. {len(inactive_users)} inaktive Benutzer gefunden, die gekickt werden sollen.")                
+        await asyncio.gather(*tasks)
+
+        end_time = time.time()  # Endzeit erfassen
+        elapsed_time = end_time - start_time  # Zeitdifferenz berechnen
+
+        inactive_users = [member for member in guild.members if member.id not in active_users and not member.bot]
+
+        self.logger.info(f"Lesevorgang abgeschlossen. {len(inactive_users)} inaktive Benutzer gefunden, die gekickt werden sollen.")
+        self.logger.info(f"Das Einlesen der Channels hat {elapsed_time:.2f} Sekunden gedauert.")            
+        i = 0
 
         for member in inactive_users:
             if execute:
                 try:
-                    await member.kick(reason=f"Inaktiv für {months} Monate")
-                    kicked_users.append(member)
-                    self.logger.info(f"User {member.name} (ID: {member.id}) wurde gekickt.")
                     # Sende Nachricht an den Benutzer
                     invite = await guild.text_channels[0].create_invite(max_uses=1, unique=True)
-                    embed = disnake.Embed(title="Du wurdest gekickt", color=disnake.Color.red())
-                    embed.add_field(name="Grund", value=f"Inaktiv für {months} Monate", inline=False)
-                    embed.add_field(name="Wiederbeitreten", value=f"[Hier klicken]({invite.url}) um dem Server wieder beizutreten.", inline=False)
+                    embed = disnake.Embed(title="Du wurdest gekickt von Aincrad", color=disnake.Color.dark_blue())
+                    embed.set_author(name="Aincrad", icon_url=guild.icon.url)
+                    embed.add_field(name="Grund", value=f"Inaktiv für {months} Monate. Grund für diesen Prozess ist das entfernen von inaktiven/Scammer Accounts.", inline=False)                    
+                    embed.add_field(name="Wiederbeitreten", value=f"[Hier klicken]({invite.url}) um dem Server wieder beizutreten. Wir empfangen dich gerne erneut, solltest du dem Server wieder beitreten wollen.", inline=False)
                     try:
                         await member.send(embed=embed)
                     except disnake.Forbidden:
                         self.logger.warning(f"Keine Berechtigung, Nachricht an {member.name} (ID: {member.id}) zu senden.")
+                        await member.kick(reason=f"Inaktiv für {months} Monate")
+                        kicked_users.append(member)
+                        self.logger.info(f"User {member.name} (ID: {member.id}) wurde gekickt. {i}/{len(inactive_users)}")                                            
                 except disnake.Forbidden:
                     failed_kicks.append(member)
                     self.logger.warning(f"Keine Berechtigung, {member.name} (ID: {member.id}) zu kicken.")
@@ -693,40 +713,87 @@ class MyCommands(commands.Cog):
 
         embed = disnake.Embed(title="Kick Inaktive Benutzer", color=disnake.Color.red())
         embed.add_field(name="Anzahl der gekickten Benutzer", value=len(kicked_users), inline=False)
+
+        def split_into_chunks(text, max_length):
+            """Splits text into chunks of a maximum length."""
+            return [text[i:i + max_length] for i in range(0, len(text), max_length)]  
+
         if kicked_users:
             kicked_list = "\n".join([f"{member.name} (ID: {member.id})" for member in kicked_users])
-            embed.add_field(name="Gekickte Benutzer" if execute else "Benutzer, die gekickt werden würden", value=kicked_list, inline=False)
+            if len(kicked_list) > MAX_EMBED_FIELD_LENGTH:
+                chunks = split_into_chunks(kicked_list, MAX_EMBED_FIELD_LENGTH)
+                for i, chunk in enumerate(chunks):
+                    field_name = f"Gekickte Benutzer (Teil {i+1})" if execute else f"Benutzer, die gekickt werden würden (Teil {i+1})"
+                    current_embed_fields.append((field_name, chunk))
+                    current_embed_length += len(field_name) + len(chunk)
+                    if current_embed_length > MAX_EMBED_TOTAL_LENGTH:
+                        embeds.append(create_embed("Kick Inaktive Benutzer", disnake.Color.red(), current_embed_fields))
+                        current_embed_fields = []
+                        current_embed_length = 0
+            else:
+                current_embed_fields.append(("Gekickte Benutzer" if execute else "Benutzer, die gekickt werden würden", kicked_list))
+                current_embed_length += len("Gekickte Benutzer" if execute else "Benutzer, die gekickt werden würden") + len(kicked_list)
+
+        # Add failed kicks to embed fields
         if failed_kicks:
             failed_list = "\n".join([f"{member.name} (ID: {member.id})" for member in failed_kicks])
-            embed.add_field(name="Fehlgeschlagene Kicks", value=failed_list, inline=False)
+            if len(failed_list) > MAX_EMBED_FIELD_LENGTH:
+                chunks = split_into_chunks(failed_list, MAX_EMBED_FIELD_LENGTH)
+                for i, chunk in enumerate(chunks):
+                    field_name = f"Fehlgeschlagene Kicks (Teil {i+1})"
+                    current_embed_fields.append((field_name, chunk))
+                    current_embed_length += len(field_name) + len(chunk)
+                    if current_embed_length > MAX_EMBED_TOTAL_LENGTH:
+                        embeds.append(create_embed("Kick Inaktive Benutzer", disnake.Color.red(), current_embed_fields))
+                        current_embed_fields = []
+                        current_embed_length = 0
+            else:
+                current_embed_fields.append(("Fehlgeschlagene Kicks", failed_list))
+                current_embed_length += len("Fehlgeschlagene Kicks") + len(failed_list)
 
-        await inter.edit_original_response(embed=embed)
+        if current_embed_fields:
+            embeds.append(create_embed("Kick Inaktive Benutzer", disnake.Color.red(), current_embed_fields))
+
+        # Send all embeds
+        first_embed = True
+        channel = inter.channel
+        for embed in embeds:
+            if first_embed:
+                await inter.edit_original_response(embed=embed)
+                first_embed = False
+            else:
+                await channel.send(embed=embed)
+
         self.logger.info(f"Kick-Prozess abgeschlossen. {len(kicked_users)} Benutzer wurden gekickt." if execute else f"{len(kicked_users)} Benutzer würden gekickt werden.")
 
-    async def check_user_activity(self, member, guild, cutoff_date, semaphore):
+    async def log_active_users(self, channel, cutoff_date, semaphore, active_users):
         async with semaphore:
-            self.logger.debug(f"Überprüfe Aktivität von Benutzer {member.name} (ID: {member.id})...")
-            last_message_date = datetime(1970, 1, 1, tzinfo=timezone.utc)
-            for channel in guild.text_channels:
-                try:
-                    async for message in channel.history(limit=None):
-                        if message.created_at < cutoff_date:
-                            break
-                        if message.author.id == member.id:
-                            last_message_date = message.created_at
-                            self.logger.debug(f"Benutzer {member.name} (ID: {member.id}) hat zuletzt am {last_message_date} geschrieben.")                            
-                            break
-                    if last_message_date != datetime(1970, 1, 1, tzinfo=timezone.utc):
-                        break                    
-                except Exception as e:
-                    self.logger.warning(f"Fehler beim Durchsuchen der Nachrichten in Kanal {channel.name}: {e}")
-                    continue                        
-        
-        if last_message_date == datetime(1970, 1, 1, tzinfo=timezone.utc):
-            last_message_date = None
-            self.logger.debug(f"Benutzer {member.name} (ID: {member.id}) hat in den angegebenen Monaten keine Nachrichten geschrieben.")
-        
-        return member, last_message_date
-        
+            try:
+                async for message in channel.history(limit=None):
+                    if message.created_at < cutoff_date:
+                        break
+                    active_users.add(message.author.id)
+            except Exception as e:
+                self.logger.warning(f"Fehler beim Durchsuchen der Nachrichten in Kanal {channel.name}: {e}")
+
+    @commands.slash_command(guild_ids=[854698446996766730])
+    @RoleHierarchy.check_permissions("Leitung")
+    async def test_kick(self, inter: disnake.ApplicationCommandInteraction, member: disnake.Member):
+        """Testet das Senden einer Nachricht an einen Benutzer."""
+        await inter.response.defer()        
+        self.logger.info(f"User {member.name} (ID: {member.id}) wurde gekickt. (Test)")
+        # Sende Nachricht an den Benutzer
+        invite = await inter.guild.text_channels[0].create_invite(max_uses=1, unique=True)
+        embed = disnake.Embed(title="Du wurdest gekickt von Aincrad", color=disnake.Color.dark_blue())
+        embed.set_author(name="Aincrad", icon_url=inter.guild.icon.url)
+        embed.add_field(name="Grund", value=f"Inaktiv für test Monate. Grund für diesen Prozess ist das entfernen von inaktiven/Scammer Accounts", inline=False)                    
+        embed.add_field(name="Wiederbeitreten", value=f"[Hier klicken]({invite.url}) um dem Server wieder beizutreten. Wir empfangen dich gerne erneut, solltest du dem Server wieder beitreten wollen.", inline=False)
+        try:
+            await member.send(embed=embed)        
+            await member.kick(reason=f"Test kick")
+        except Exception as e:
+            self.logger.warning(f"Fehler beim Test kick: {e}")
+        await inter.edit_original_response(content=f"Test kick für {member.mention} wurde durchgeführt.")
+
 def setup(bot: commands.Bot):
     bot.add_cog(MyCommands(bot))

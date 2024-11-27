@@ -1,7 +1,7 @@
 import disnake, os, logging
 import disnake.audit_logs
 from disnake.ext import commands, tasks
-from datetime import datetime, timedelta, timedelta
+from datetime import datetime, timedelta, timedelta, timezone
 from collections import namedtuple
 import asyncio
 import time
@@ -96,8 +96,8 @@ class Globalfile(commands.Cog):
                 # Konvertiere ban_end_timestamp von einem String zu einem Float
                 ban_end_timestamp = float(ban_end_timestamp)
                 # Konvertiere den Unix-Timestamp in ein datetime-Objekt
-                ban_end_datetime = datetime.fromtimestamp(ban_end_timestamp)
-                if datetime.now() > ban_end_datetime:
+                ban_end_datetime = datetime.fromtimestamp(ban_end_timestamp, tz=timezone.utc)
+                if datetime.now(timezone.utc) > ban_end_datetime:
                     # Banndauer ist abgelaufen, Benutzer entbannen
                     guild = self.bot.get_guild(854698446996766730)  # Ersetzen Sie dies durch die tatsächliche ID Ihres Servers
                     if guild is None:
@@ -151,7 +151,7 @@ class Globalfile(commands.Cog):
     async def admin_did_something(self, action: disnake.AuditLogAction, handleduser: Union[disnake.User, disnake.Member]):
         DeletedbyAdmin = False
         guild = self.bot.get_guild(854698446996766730)
-        async for entry in guild.audit_logs(limit=5, action=action, after=datetime.now() - timedelta(minutes=5)):                                            
+        async for entry in guild.audit_logs(limit=5, action=action, after=datetime.now(timezone.utc) - timedelta(minutes=5)):                                            
             if action == disnake.AuditLogAction.message_delete or action == disnake.AuditLogAction.member_disconnect:
                 if entry.extra.count is not None:
                     if self.TimerMustReseted:
@@ -268,7 +268,7 @@ class Globalfile(commands.Cog):
     async def check_warn_levels(self):
         """Überprüft regelmäßig die Warnlevel und reduziert sie gegebenenfalls."""
         cursor = self.db.connection.cursor()
-        current_time = datetime.now()
+        current_time = datetime.now(timezone.utc)
         four_months_ago = current_time - timedelta(days=4*30)  # Grobe Schätzung für 4 Monate
 
         # Hole alle Benutzer mit WARNLEVEL > 0
@@ -280,23 +280,25 @@ class Globalfile(commands.Cog):
             cursor.execute("SELECT MAX(INSERTDATE) FROM WARN WHERE USERID = ?", (user_id,))
             last_warn_date = cursor.fetchone()[0]
 
-            if last_warn_date and datetime.strptime(last_warn_date, '%Y-%m-%d %H:%M:%S') < four_months_ago:
-                # Überprüfe, wann die letzte System-Note für die Reduzierung des Warnlevels war
-                cursor.execute("SELECT MAX(INSERT_DATE) FROM NOTE WHERE USERID = ? AND NOTE LIKE 'System Note: Warnlevel reduced%'", (user_id,))
-                last_note_date = cursor.fetchone()[0]
+            if last_warn_date:
+                last_warn_date = datetime.strptime(last_warn_date, '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc)
+                if last_warn_date < four_months_ago:
+                    # Überprüfe, wann die letzte System-Note für die Reduzierung des Warnlevels war
+                    cursor.execute("SELECT MAX(INSERT_DATE) FROM NOTE WHERE USERID = ? AND NOTE LIKE 'System Note: Warnlevel reduced%'", (user_id,))
+                    last_note_date = cursor.fetchone()[0]
 
-                if not last_note_date or datetime.strptime(last_note_date, '%Y-%m-%d %H:%M:%S') < four_months_ago:
-                    # Reduziere das Warnlevel um 1
-                    new_warnlevel = max(0, warnlevel - 1)
-                    cursor.execute("UPDATE USER SET WARNLEVEL = ? WHERE ID = ?", (new_warnlevel, user_id))
-                    self.db.connection.commit()
+                    if not last_note_date or datetime.strptime(last_note_date, '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc) < four_months_ago:
+                        # Reduziere das Warnlevel um 1
+                        new_warnlevel = max(0, warnlevel - 1)
+                        cursor.execute("UPDATE USER SET WARNLEVEL = ? WHERE ID = ?", (new_warnlevel, user_id))
+                        self.db.connection.commit()
 
-                    # Füge eine System-Note hinzu
-                    system_note = f"System Note: Warnlevel reduced from {warnlevel} to {new_warnlevel}"
-                    cursor.execute("INSERT INTO NOTE (NOTE, USERID, INSERT_DATE) VALUES (?, ?, ?)", (system_note, user_id, current_time.strftime('%Y-%m-%d %H:%M:%S')))
-                    self.db.connection.commit()
+                        # Füge eine System-Note hinzu
+                        system_note = f"System Note: Warnlevel reduced from {warnlevel} to {new_warnlevel}"
+                        cursor.execute("INSERT INTO NOTE (NOTE, USERID, INSERT_DATE) VALUES (?, ?, ?)", (system_note, user_id, current_time.strftime('%Y-%m-%d %H:%M:%S')))
+                        self.db.connection.commit()
 
-                    self.logger.info(f"Warnlevel for user {user_id} reduced from {warnlevel} to {new_warnlevel}")    
+                        self.logger.info(f"Warnlevel for user {user_id} reduced from {warnlevel} to {new_warnlevel}")
     
     tasks.loop(hours=24)
     async def sync_users(self):
