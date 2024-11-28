@@ -43,13 +43,13 @@ class Reaction(commands.Cog):
                     if message.channel.id != 1208770898832658493 and message.channel.id != 1219347644640530553:
                         if botrolle not in member.roles:                                
                             avatar_url = member.avatar.url if member.avatar else member.default_avatar.url
-
+                            current_datetime = self.globalfile.get_current_time()
                             await self.moderation.check_message_for_badwords(message)
                             self.logger.info(f"Nachricht von Server {message.guild.name} erhalten: Channel: {message.channel.name}, Username: {member.name}, Userid: {member.id}, Content: {message.content}")                
                             embed = disnake.Embed(title=f"Message send in <#{message.channel.id}>!", color=0x4169E1)                                                                
                             embed.set_author(name=member.name, icon_url=avatar_url)               
                             embed.add_field(name="Message:", value=message.content, inline=True)              
-                            embed.set_footer(text=f"ID: {member.id} - heute um {(message.created_at + timedelta(hours=1)).strftime('%H:%M:%S')} Uhr \nMessage-ID: {message.id}")
+                            embed.set_footer(text=f"ID: {member.id} - heute um {current_datetime.strftime('%H:%M:%S')} Uhr \nMessage-ID: {message.id}")
                             if message.attachments:
                                 embed.set_image(url=message.attachments[0].url)
             
@@ -57,7 +57,7 @@ class Reaction(commands.Cog):
                             userrecord = self.globalfile.get_user_record(discordid=member.id)
                             # Speichern der Nachricht in der Datenbank
                             cursor = self.db.connection.cursor()
-                            current_datetime = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+                            current_datetime = self.globalfile.get_current_time().strftime('%Y-%m-%d %H:%M:%S')
                             image_paths = [attachment.url for attachment in message.attachments]
                             if len(image_paths) != 0:
                                 image_path_fields = ", " + ', '.join([f"IMAGEPATH{i+1}" for i in range(len(image_paths))])
@@ -83,14 +83,14 @@ class Reaction(commands.Cog):
                         User = await self.globalfile_instance.admin_did_something(disnake.AuditLogAction.message_delete, member)
                         avatar_url = member.avatar.url if member.avatar else member.default_avatar.url
 
-                        current_datetime = datetime.now(timezone.utc)
+                        current_datetime = self.globalfile.get_current_time()
                         
                         self.logger.info(f"Nachricht von Server {message.guild.name} deleted: Channel: {message.channel.name}. Username: {member.name}, Userid: {member.id}, Content: {message.content}, Message deleted by: {User.username}, User ID: {str(User.userid)}")                                  
                         embed = disnake.Embed(title=f"Message deleted in <#{message.channel.id}>!", color=0xFF0000)                                                 
                         embed.set_author(name=member.name, icon_url=avatar_url)               
                         embed.add_field(name="Message:", value=message.content, inline=False)              
                         embed.add_field(name="Deleted by:", value=f"{User.username} - {str(User.userid)}", inline=False)
-                        embed.set_footer(text=f"ID: {member.id} - heute um {(current_datetime + timedelta(hours=1)).strftime('%H:%M:%S')} Uhr \nMessage-ID: {message.id}")
+                        embed.set_footer(text=f"ID: {member.id} - heute um {current_datetime.strftime('%H:%M:%S')} Uhr \nMessage-ID: {message.id}")
 
                         if User.username == member.name:
                             channel = message.guild.get_channel(1208770898832658493)
@@ -120,14 +120,14 @@ class Reaction(commands.Cog):
                 member = await self.globalfile.get_member_from_user(before.author, before.guild.id)
                 if member and before.channel.id != 1208770898832658493 and before.channel.id != 1219347644640530553 and botrolle not in member.roles:                                              
                     avatar_url = member.avatar.url if member.avatar else member.default_avatar.url
-                    current_datetime = datetime.now(timezone.utc)
+                    current_datetime = self.globalfile.get_current_time()
 
                     self.logger.info(f"Nachricht von Server {before.guild.name} edited: Channel {after.channel.name}, Username: {member.name}, Userid: {member.id}, Content before: {before.content}, Content after: {after.content}")
                     embed = disnake.Embed(title=f"Message edited in <#{after.channel.id}>!", color=0xFFA500)
                     embed.set_author(name=member.name, icon_url=avatar_url)               
                     embed.add_field(name="Message before:", value=before.content, inline=False)              
                     embed.add_field(name="Message after:", value=after.content, inline=False)              
-                    embed.set_footer(text=f"ID: {member.id} - heute um {(current_datetime + timedelta(hours=1)).strftime('%H:%M:%S')} Uhr \nMessage-ID: {before.id}")
+                    embed.set_footer(text=f"ID: {member.id} - heute um {current_datetime.strftime('%H:%M:%S')} Uhr \nMessage-ID: {before.id}")
                     if before.attachments:
                         embed.set_image(url=before.attachments[0].url)
 
@@ -142,7 +142,7 @@ class Reaction(commands.Cog):
                     
                     userrecord = self.globalfile.get_user_record(discordid=member.id)
                     # Speichern der bearbeiteten Nachricht in der Datenbank
-                    current_datetime = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+                    current_datetime = self.globalfile.get_current_time().strftime('%Y-%m-%d %H:%M:%S')
                     image_paths = [attachment.url for attachment in after.attachments]
                     if len(image_paths) != 0:
                         image_path_fields = ", " + ', '.join([f"IMAGEPATH{i+1}" for i in range(len(image_paths))])
@@ -171,7 +171,7 @@ class Reaction(commands.Cog):
                 for role in removed_roles:
                     self.logger.info(f"Rolle entfernt: {role.name} von {after.name} ({after.id})")
 
-                current_datetime = datetime.now(timezone.utc)
+                current_datetime = self.globalfile.get_current_time()
                 log_channel_id = 1221018527289577582
                 log_channel = self.bot.get_channel(log_channel_id)
                 if log_channel:
@@ -184,7 +184,7 @@ class Reaction(commands.Cog):
                             embed.add_field(name="Hinzugefügte Rollen", value=", ".join([role.mention for role in added_roles]), inline=False)
                         if removed_roles:
                             embed.add_field(name="Entfernte Rollen", value=", ".join([role.mention for role in removed_roles]), inline=False)                        
-                        embed.set_footer(text=f"ID: {before.id} - heute um {(current_datetime).strftime('%H:%M:%S')} Uhr")
+                        embed.set_footer(text=f"ID: {before.id} - heute um {current_datetime.strftime('%H:%M:%S')} Uhr")
                         await log_channel.send(embed=embed)
 
         except Exception as e:
@@ -193,7 +193,7 @@ class Reaction(commands.Cog):
     @commands.Cog.listener()
     async def on_member_remove(self, member: disnake.Member):
         try:
-            current_datetime = datetime.now(timezone.utc)
+            current_datetime = self.globalfile.get_current_time
             log_channel_id = 854698447113027594  # Replace with your log channel ID
             log_channel = self.bot.get_channel(log_channel_id)
             if log_channel:
@@ -201,11 +201,13 @@ class Reaction(commands.Cog):
                 avatar_url = member.avatar.url if member.avatar else member.default_avatar.url
                 embed.set_author(name=member.name, icon_url=avatar_url)
                 embed.add_field(name="Mitglied", value=member.mention, inline=False)
-                embed.set_footer(text=f"ID: {member.id} - heute um {(current_datetime).strftime('%H:%M:%S')} Uhr")
+                embed.set_footer(text=f"ID: {member.id} - heute um {current_datetime.strftime('%H:%M:%S')} Uhr")
                 await log_channel.send(embed=embed)
 
         except Exception as e:
             self.logger.critical(f"Fehler aufgetreten [on_member_remove]: {e}")
+
+    
 
 def setupReaction(bot):
     bot.add_cog(Reaction(bot))

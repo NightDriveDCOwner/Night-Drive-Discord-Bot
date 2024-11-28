@@ -5,7 +5,8 @@ import time
 import re
 from globalfile import Globalfile
 from RoleHierarchy import RoleHierarchy
-from datetime import datetime, timedelta, timedelta, timezone
+from datetime import datetime, timedelta, timedelta
+import pytz
 from dotenv import load_dotenv
 import logging
 import sqlite3
@@ -77,7 +78,7 @@ class MyCommands(commands.Cog):
         # Berechnen der Banndauer
         if duration != "0s":
             duration_seconds = self.globalfile.convert_duration_to_seconds(duration)
-            ban_end_time = datetime.now(timezone.utc) + timedelta(seconds=duration_seconds)
+            ban_end_time = self.globalfile.get_current_time + timedelta(seconds=duration_seconds)
             ban_end_timestamp = int(ban_end_time.timestamp())
             ban_end_formatted = ban_end_time.strftime('%Y-%m-%d %H:%M:%S')
         else:
@@ -327,7 +328,7 @@ class MyCommands(commands.Cog):
         userrecord = self.globalfile.get_user_record(discordid=user.id)
 
         cursor = self.db.connection.cursor()
-        current_datetime = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+        current_datetime = self.globalfile.get_current_time.strftime('%Y-%m-%d %H:%M:%S')
         cursor.execute("INSERT INTO NOTE (NOTE, USERID, IMAGEPATH, INSERT_DATE) VALUES (?, ?, ?, ?)", (reason, userrecord['ID'], image_path, current_datetime))
         self.db.connection.commit()
 
@@ -342,7 +343,7 @@ class MyCommands(commands.Cog):
         embed.add_field(name="Grund", value=reason, inline=False)
         if image_path:
             embed.add_field(name="Bildpfad", value=image_path, inline=False)
-        embed.set_footer(text=f"ID: {user.id} - heute um {(datetime.now(timezone.utc)).strftime('%H:%M:%S')} Uhr")
+        embed.set_footer(text=f"ID: {user.id} - heute um {(self.globalfile.get_current_time).strftime('%H:%M:%S')} Uhr")
         await inter.edit_original_response(embed=embed)
 
     @commands.slash_command(guild_ids=[854698446996766730])
@@ -383,7 +384,7 @@ class MyCommands(commands.Cog):
         userrecord = self.globalfile.get_user_record(discordid=user.id)            
 
         cursor = self.db.connection.cursor()
-        current_datetime = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+        current_datetime = self.globalfile.get_current_time.strftime('%Y-%m-%d %H:%M:%S')
         cursor.execute("INSERT INTO WARN (USERID, REASON, IMAGEPATH, LEVEL, INSERTDATE) VALUES (?, ?, ?, ?, ?)", (userrecord['ID'], reason, image_path, level, current_datetime))
         self.db.connection.commit()
 
@@ -404,7 +405,7 @@ class MyCommands(commands.Cog):
             user_embed.add_field(name="Warnlevel", value=str(level), inline=False)
             if image_path:
                 user_embed.add_field(name="Bildpfad", value=image_path, inline=False)
-            user_embed.set_footer(text=f"ID: {user.id} - heute um {(datetime.now(timezone.utc)).strftime('%H:%M:%S')} Uhr")
+            user_embed.set_footer(text=f"ID: {user.id} - heute um {(self.globalfile.get_current_time).strftime('%H:%M:%S')} Uhr")
             await user.send(embed=user_embed)
         except Exception as e:
             await inter.edit_original_response(content=f"Fehler beim Senden der Warn-Nachricht: {e}")
@@ -416,7 +417,7 @@ class MyCommands(commands.Cog):
         embed.add_field(name="Warnlevel", value=str(level), inline=False)
         if image_path:
             embed.add_field(name="Bildpfad", value=image_path, inline=False)
-        embed.set_footer(text=f"ID: {user.id} - heute um {(datetime.now(timezone.utc)).strftime('%H:%M:%S')} Uhr")
+        embed.set_footer(text=f"ID: {user.id} - heute um {(self.globalfile.get_current_time).strftime('%H:%M:%S')} Uhr")
         await inter.edit_original_response(embed=embed)
 
     @commands.slash_command(guild_ids=[854698446996766730])
@@ -489,7 +490,7 @@ class MyCommands(commands.Cog):
         # embed.add_field(name="User ID", value=user_info[0], inline=False)        
         # embed.add_field(name="Discord ID", value=user_info[1], inline=False)
         # embed.add_field(name="Benutzername", value=user_info[2], inline=False)   
-        current_time = datetime.now(timezone.utc)
+        current_time = self.globalfile.get_current_time
         embed.set_footer(text=f"ID: {user_info[1]} | {user_info[0]} - heute um {(current_time + timedelta(hours=1)).strftime('%H:%M:%S')} Uhr") 
 
         # Füge Notizen hinzu
@@ -564,7 +565,7 @@ class MyCommands(commands.Cog):
         cursor = self.db.connection.cursor()
 
         # Berechne das Datum vor sieben Tagen
-        seven_days_ago = datetime.now(timezone.utc) - timedelta(days=7)
+        seven_days_ago = self.globalfile.get_current_time - timedelta(days=7)
 
         # Hole alle Nachrichten aus der Datenbank
         cursor.execute("SELECT MESSAGEID, INSERT_DATE FROM Message")
@@ -658,7 +659,7 @@ class MyCommands(commands.Cog):
         MAX_EMBED_FIELD_LENGTH = 1024
         MAX_EMBED_TOTAL_LENGTH = 5000 
         guild = inter.guild
-        cutoff_date = datetime.now(timezone.utc) - timedelta(days=months*30)
+        cutoff_date = self.globalfile.get_current_time - timedelta(days=months*30)
         active_users = set()
         kicked_users = []
         failed_kicks = []
@@ -713,10 +714,6 @@ class MyCommands(commands.Cog):
 
         embed = disnake.Embed(title="Kick Inaktive Benutzer", color=disnake.Color.red())
         embed.add_field(name="Anzahl der gekickten Benutzer", value=len(kicked_users), inline=False)
-
-        def split_into_chunks(text, max_length):
-            """Splits text into chunks of a maximum length."""
-            return [text[i:i + max_length] for i in range(0, len(text), max_length)]  
 
         if kicked_users:
             kicked_list = "\n".join([f"{member.name} (ID: {member.id})" for member in kicked_users])

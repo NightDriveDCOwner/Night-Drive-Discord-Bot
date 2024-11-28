@@ -4,7 +4,7 @@ from disnake.ext import commands, tasks
 from datetime import datetime, timedelta, timedelta, timezone
 from collections import namedtuple
 import asyncio
-import time
+import pytz
 import re
 from typing import Union
 from DBConnection import DatabaseConnection
@@ -97,7 +97,8 @@ class Globalfile(commands.Cog):
                 ban_end_timestamp = float(ban_end_timestamp)
                 # Konvertiere den Unix-Timestamp in ein datetime-Objekt
                 ban_end_datetime = datetime.fromtimestamp(ban_end_timestamp, tz=timezone.utc)
-                if datetime.now(timezone.utc) > ban_end_datetime:
+                current_time = self.get_current_time()
+                if current_time > ban_end_datetime:
                     # Banndauer ist abgelaufen, Benutzer entbannen
                     guild = self.bot.get_guild(854698446996766730)  # Ersetzen Sie dies durch die tatsächliche ID Ihres Servers
                     if guild is None:
@@ -151,7 +152,7 @@ class Globalfile(commands.Cog):
     async def admin_did_something(self, action: disnake.AuditLogAction, handleduser: Union[disnake.User, disnake.Member]):
         DeletedbyAdmin = False
         guild = self.bot.get_guild(854698446996766730)
-        async for entry in guild.audit_logs(limit=5, action=action, after=datetime.now(timezone.utc) - timedelta(minutes=5)):                                            
+        async for entry in guild.audit_logs(limit=5, action=action, after=self.get_current_time() - timedelta(minutes=5)):                                            
             if action == disnake.AuditLogAction.message_delete or action == disnake.AuditLogAction.member_disconnect:
                 if entry.extra.count is not None:
                     if self.TimerMustReseted:
@@ -268,7 +269,7 @@ class Globalfile(commands.Cog):
     async def check_warn_levels(self):
         """Überprüft regelmäßig die Warnlevel und reduziert sie gegebenenfalls."""
         cursor = self.db.connection.cursor()
-        current_time = datetime.now(timezone.utc)
+        current_time = self.get_current_time()
         four_months_ago = current_time - timedelta(days=4*30)  # Grobe Schätzung für 4 Monate
 
         # Hole alle Benutzer mit WARNLEVEL > 0
@@ -338,5 +339,10 @@ class Globalfile(commands.Cog):
                         cursor.execute("UPDATE USER SET TOTALVOICEMIN = TOTALVOICEMIN + 1 WHERE ID = ?", (userrecord['ID'],))
             self.db.connection.commit()
 
+    def get_current_time(self):
+        """Gibt die aktuelle Zeit in der deutschen Zeitzone zurück."""
+        german_timezone = pytz.timezone('Europe/Berlin')
+        return datetime.now(german_timezone)
+    
 def setupGlobal(bot):
     bot.add_cog(Globalfile(bot))
