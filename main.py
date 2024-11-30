@@ -5,6 +5,8 @@ from join import setupJoin
 from voice import setupVoice
 from globalfile import setupGlobal
 from moderation import setupModeration
+from ticket import setupTicket
+from level import setupLevel
 import disnake
 import logging
 import asyncio
@@ -52,5 +54,8 @@ setupJoin(bot)
 setupVoice(bot)
 setupGlobal(bot)
 setupModeration(bot)
+setupTicket(bot)
+setupLevel(bot)
+
 
 bot.run("MTIwODE3NTc0ODk4MDkzNjc2NA.GGk_8k.IUe5KR-MSpolnO_I7rGtx5qsE1Tr0M9fyk7gfw")

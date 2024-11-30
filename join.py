@@ -66,7 +66,7 @@ class Join(commands.Cog):
                 mod_embed.add_field(name="Benutzer ID", value=before.id, inline=True)
                 mod_embed.add_field(name="Erwähnung", value=before.mention, inline=True)
 
-                class CopyMentionButton(disnake.ui.Button):
+                class CopyMentionButton(disnake.ui.Button):                
                     def __init__(self, mention):
                         super().__init__(label="Erwähnung kopieren", style=disnake.ButtonStyle.primary)
                         self.mention = mention
@@ -76,7 +76,7 @@ class Join(commands.Cog):
                         pyperclip.copy(self.mention)
                         await interaction.response.send_message(f"`{self.mention}` wurde in die Zwischenablage kopiert!", ephemeral=True)
 
-                view = disnake.ui.View()
+                view = disnake.ui.View(timeout=None)  # Setze die Lebensdauer der View auf unbegrenzt
                 view.add_item(CopyMentionButton(before.mention))
 
                 mod_channel = guild.get_channel(854698447113027594)  # Ersetze durch die ID des Moderatoren-Kanals
