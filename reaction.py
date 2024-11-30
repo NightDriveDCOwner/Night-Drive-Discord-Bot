@@ -31,8 +31,6 @@ class Reaction(commands.Cog):
             handler.setFormatter(formatter)
             self.logger.addHandler(handler)
 
- 
-
     @commands.Cog.listener()
     async def on_message(self, message: disnake.Message):
         try:
@@ -54,20 +52,6 @@ class Reaction(commands.Cog):
                                 embed.set_image(url=message.attachments[0].url)
             
                             channel = message.guild.get_channel(1208770898832658493)
-                            userrecord = self.globalfile.get_user_record(discordid=member.id)
-                            # Speichern der Nachricht in der Datenbank
-                            cursor = self.db.connection.cursor()
-                            current_datetime = self.globalfile.get_current_time().strftime('%Y-%m-%d %H:%M:%S')
-                            image_paths = [attachment.url for attachment in message.attachments]
-                            if len(image_paths) != 0:
-                                image_path_fields = ", " + ', '.join([f"IMAGEPATH{i+1}" for i in range(len(image_paths))])
-                                image_path_values = ", " + ', '.join(['?' for _ in range(len(image_paths))])
-                            else:
-                                image_path_fields = ""
-                                image_path_values = ""
-                            query = f"INSERT INTO MESSAGE (CONTENT, USERID, CHANNELID, MESSAGEID, INSERT_DATE {image_path_fields}) VALUES (?, ?, ?, ?, ?{image_path_values})"
-                            cursor.execute(query, (message.content, userrecord['ID'], message.channel.id, message.id, current_datetime, *image_paths))
-                            self.db.connection.commit()
                             await channel.send(embed=embed)
         except Exception as e:
             self.logger.critical(f"Fehler aufgetreten [on_message]: {e}") 
