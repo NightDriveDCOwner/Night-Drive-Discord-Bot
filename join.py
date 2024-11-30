@@ -10,7 +10,7 @@ class Join(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.logger = logging.getLogger("Join")
-        formatter = logging.Formatter('[%(asctime)s - %(name)s - %(levelname)s - %(message)s]:')
+        formatter = logging.Formatter('[%(asctime)s - %(name)s - %(levelname)s]: %(message)s')
         handler = logging.StreamHandler()
         handler.setFormatter(formatter)
         self.logger.addHandler(handler)
@@ -87,7 +87,7 @@ class Join(commands.Cog):
                 embed = disnake.Embed(
                     title="Willkommen auf unserem Server!",
                     description=f"Hallo {after.mention}, wir freuen uns, dich bei uns begrüßen zu dürfen!",
-                    color=0x00FF00  # Grün
+                    color=0x117A65 # Grün
                 )
                 embed.set_author(name="Aincrad", icon_url=after.guild.icon.url)
                 embed.set_thumbnail(url=after.avatar.url)
