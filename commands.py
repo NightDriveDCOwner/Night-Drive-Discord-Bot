@@ -328,7 +328,7 @@ class MyCommands(commands.Cog):
         userrecord = self.globalfile.get_user_record(discordid=user.id)
 
         cursor = self.db.connection.cursor()
-        current_datetime = self.globalfile.get_current_time.strftime('%Y-%m-%d %H:%M:%S')
+        current_datetime = self.globalfile.get_current_time().strftime('%Y-%m-%d %H:%M:%S')
         cursor.execute("INSERT INTO NOTE (NOTE, USERID, IMAGEPATH, INSERT_DATE) VALUES (?, ?, ?, ?)", (reason, userrecord['ID'], image_path, current_datetime))
         self.db.connection.commit()
 
@@ -343,7 +343,7 @@ class MyCommands(commands.Cog):
         embed.add_field(name="Grund", value=reason, inline=False)
         if image_path:
             embed.add_field(name="Bildpfad", value=image_path, inline=False)
-        embed.set_footer(text=f"ID: {user.id} - heute um {(self.globalfile.get_current_time).strftime('%H:%M:%S')} Uhr")
+        embed.set_footer(text=f"ID: {user.id} - heute um {(self.globalfile.get_current_time().strftime('%H:%M:%S'))} Uhr")
         await inter.edit_original_response(embed=embed)
 
     @commands.slash_command(guild_ids=[854698446996766730])
@@ -384,7 +384,7 @@ class MyCommands(commands.Cog):
         userrecord = self.globalfile.get_user_record(discordid=user.id)            
 
         cursor = self.db.connection.cursor()
-        current_datetime = self.globalfile.get_current_time.strftime('%Y-%m-%d %H:%M:%S')
+        current_datetime = self.globalfile.get_current_time().strftime('%Y-%m-%d %H:%M:%S')
         cursor.execute("INSERT INTO WARN (USERID, REASON, IMAGEPATH, LEVEL, INSERTDATE) VALUES (?, ?, ?, ?, ?)", (userrecord['ID'], reason, image_path, level, current_datetime))
         self.db.connection.commit()
 
@@ -405,7 +405,7 @@ class MyCommands(commands.Cog):
             user_embed.add_field(name="Warnlevel", value=str(level), inline=False)
             if image_path:
                 user_embed.add_field(name="Bildpfad", value=image_path, inline=False)
-            user_embed.set_footer(text=f"ID: {user.id} - heute um {(self.globalfile.get_current_time).strftime('%H:%M:%S')} Uhr")
+            user_embed.set_footer(text=f"ID: {user.id} - heute um {(self.globalfile.get_current_time().strftime('%H:%M:%S'))} Uhr")
             await user.send(embed=user_embed)
         except Exception as e:
             await inter.edit_original_response(content=f"Fehler beim Senden der Warn-Nachricht: {e}")
@@ -417,7 +417,7 @@ class MyCommands(commands.Cog):
         embed.add_field(name="Warnlevel", value=str(level), inline=False)
         if image_path:
             embed.add_field(name="Bildpfad", value=image_path, inline=False)
-        embed.set_footer(text=f"ID: {user.id} - heute um {(self.globalfile.get_current_time).strftime('%H:%M:%S')} Uhr")
+        embed.set_footer(text=f"ID: {user.id} - heute um {(self.globalfile.get_current_time().strftime('%H:%M:%S'))} Uhr")
         await inter.edit_original_response(embed=embed)
 
     @commands.slash_command(guild_ids=[854698446996766730])
@@ -490,8 +490,8 @@ class MyCommands(commands.Cog):
         # embed.add_field(name="User ID", value=user_info[0], inline=False)        
         # embed.add_field(name="Discord ID", value=user_info[1], inline=False)
         # embed.add_field(name="Benutzername", value=user_info[2], inline=False)   
-        current_time = self.globalfile.get_current_time
-        embed.set_footer(text=f"ID: {user_info[1]} | {user_info[0]} - heute um {(current_time + timedelta(hours=1)).strftime('%H:%M:%S')} Uhr") 
+        current_time = self.globalfile.get_current_time().strftime('%H:%M:%S')
+        embed.set_footer(text=f"ID: {user_info[1]} | {user_info[0]} - heute um {(current_time)} Uhr") 
 
         # Füge Notizen hinzu
         if notes:

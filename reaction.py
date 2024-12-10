@@ -177,7 +177,7 @@ class Reaction(commands.Cog):
     @commands.Cog.listener()
     async def on_member_remove(self, member: disnake.Member):
         try:
-            current_datetime = self.globalfile.get_current_time
+            current_datetime = self.globalfile.get_current_time()
             log_channel_id = 854698447113027594  # Replace with your log channel ID
             log_channel = self.bot.get_channel(log_channel_id)
             if log_channel:
