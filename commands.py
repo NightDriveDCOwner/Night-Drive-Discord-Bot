@@ -27,6 +27,7 @@ class MyCommands(commands.Cog):
         logging_level = os.getenv("LOGGING_LEVEL", "INFO").upper()         
         self.logger.setLevel(logging_level)
         self.globalfile = Globalfile(bot)        
+        load_dotenv(dotenv_path="settings.env")
 
         # Überprüfen, ob der Handler bereits hinzugefügt wurde
         if not self.logger.handlers:
@@ -35,6 +36,21 @@ class MyCommands(commands.Cog):
             handler = logging.StreamHandler()
             handler.setFormatter(formatter)
             self.logger.addHandler(handler)
+        self.db: sqlite3.Connection = DatabaseConnection()
+        self.cursor: sqlite3.Cursor = self.db.connection.cursor()            
+        self.cursor.execute("""
+        CREATE TABLE IF NOT EXISTS TIMEOUT (
+            ID INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+            USERID INTEGER,
+            REASON TEXT,
+            TIMEOUTTO TEXT,
+            IMAGEPATH TEXT,
+            REMOVED INTEGER DEFAULT 0,
+            REMOVEDBY INTEGER DEFAULT 0,
+            REMOVEDREASON TEXT
+        )
+        """)
+        self.db.connection.commit()            
 
     def cog_unload(self):
         Globalfile.unban_task.cancel()        
@@ -159,7 +175,7 @@ class MyCommands(commands.Cog):
                 await inter.edit_original_response(content=f"{user.mention} ist nicht gebannt! Unban nicht möglich.")
                 self.logger.info(f"User {user.id} unban not possible. User is not banned.")
             else:
-                guild = self.bot.get_guild(854698446996766730)
+                guild = inter.guild
                 await guild.unban(user)
                 cursor.execute("UPDATE BAN SET UNBAN = 1 WHERE USERID = ? AND UNBAN = 0", (str(userrecord['ID']),))
                 self.db.connection.commit()
@@ -791,6 +807,119 @@ class MyCommands(commands.Cog):
         except Exception as e:
             self.logger.warning(f"Fehler beim Test kick: {e}")
         await inter.edit_original_response(content=f"Test kick für {member.mention} wurde durchgeführt.")
+        
+    @commands.slash_command(guild_ids=[854698446996766730])
+    @RoleHierarchy.check_permissions("Sr. Supporter")
+    async def timeout(self, inter: disnake.ApplicationCommandInteraction, 
+                        member: disnake.Member, 
+                        duration: str = commands.Param(name="dauer", description="Dauer des Timeouts in Sek., Min., Std., Tagen oder Jahre.(Bsp.: 0s0m0h0d0j)"),
+                        reason: str = commands.Param(name="begründung", description="Grund für den Timeout", default="Kein Grund angegeben"),
+                        warn: bool = commands.Param(name="warn", description="Soll eine Warnung erstellt werden?", default=False),
+                        warn_level: int = commands.Param(name="warnstufe", description="Warnstufe (1-3) | Default = 1 wenn warn_level = True", default=1)):
+        """Timeout einen Benutzer für eine bestimmte Dauer und optional eine Warnung erstellen."""
+        await inter.response.defer()
+
+        # Berechnen der Timeout-Dauer
+        duration_seconds = self.globalfile.convert_duration_to_seconds(duration)
+        if duration_seconds < 60 or duration_seconds > 28 * 24 * 60 * 60:
+            await inter.edit_original_response(content="Die Timeout-Dauer muss zwischen 60 Sekunden und 28 Tagen liegen.")
+            return
+
+        timeout_end_time = disnake.utils.utcnow() + timedelta(seconds=duration_seconds)
+
+        try:
+            await member.timeout(duration=timeout_end_time, reason=reason)
+            embed = disnake.Embed(title="Benutzer getimeoutet", description=f"{member.mention} wurde erfolgreich getimeoutet!", color=disnake.Color.red())
+            embed.set_author(name=member.name, icon_url=member.avatar.url if member.avatar else member.default_avatar.url)
+            embed.add_field(name="Grund", value=reason, inline=False)
+            embed.add_field(name="Dauer", value=duration, inline=True)
+            embed.add_field(name="Ende des Timeouts", value=timeout_end_time.strftime('%Y-%m-%d %H:%M:%S'), inline=True)
+            await inter.edit_original_response(embed=embed)
+
+            # Speichere den Timeout in der Datenbank
+            cursor = self.db.connection.cursor()
+            current_datetime = self.globalfile.get_current_time().strftime('%Y-%m-%d %H:%M:%S')
+            cursor.execute("INSERT INTO TIMEOUT (USERID, REASON, TIMEOUTTO) VALUES (?, ?, ?)", (member.id, reason, timeout_end_time.strftime('%Y-%m-%d %H:%M:%S')))
+            self.db.connection.commit()
+
+        except disnake.Forbidden:
+            await inter.edit_original_response(content=f"Ich habe keine Berechtigung, {member.mention} zu timeouten.")
+            return
+        except disnake.HTTPException as e:
+            await inter.edit_original_response(content=f"Ein Fehler ist aufgetreten: {e}")
+            return
+
+        if warn:
+            if warn_level < 1 or warn_level > 3:
+                await inter.edit_original_response(content="Warnlevel muss zwischen 1 und 3 liegen.")
+                return
+
+            avatar_url = member.avatar.url if member.avatar else member.default_avatar.url
+            userrecord = self.globalfile.get_user_record(discordid=member.id)
+
+            cursor = self.db.connection.cursor()
+            current_datetime = self.globalfile.get_current_time().strftime('%Y-%m-%d %H:%M:%S')
+            cursor.execute("INSERT INTO WARN (USERID, REASON, LEVEL, INSERTDATE) VALUES (?, ?, ?, ?)", (userrecord['ID'], reason, warn_level, current_datetime))
+            self.db.connection.commit()
+
+            # Hole die zuletzt eingefügte ID
+            caseid = cursor.lastrowid
+
+            # Aktualisiere das Warnlevel in der User-Tabelle
+            cursor.execute("UPDATE USER SET WARNLEVEL = ? WHERE ID = ?", (warn_level, userrecord['ID']))
+            self.db.connection.commit()
+
+            self.logger.info(f"Warn added to User {userrecord['USERNAME']} : {reason}")
+
+            # Sende eine Warn-Nachricht an den Benutzer
+            try:
+                user_embed = disnake.Embed(title="Warnung erhalten", description=f"Du hast eine Warnung erhalten.", color=disnake.Color.red())
+                user_embed.set_author(name=member.name, icon_url=avatar_url)
+                user_embed.add_field(name="Grund", value=reason, inline=False)
+                user_embed.add_field(name="Warnlevel", value=str(warn_level), inline=False)
+                user_embed.set_footer(text=f"ID: {member.id} - heute um {(self.globalfile.get_current_time().strftime('%H:%M:%S'))} Uhr")
+                await member.send(embed=user_embed)
+            except Exception as e:
+                await inter.edit_original_response(content=f"Fehler beim Senden der Warn-Nachricht: {e}")
+
+            # Sende eine Bestätigungsnachricht
+            warn_embed = disnake.Embed(title=f"Warnung erstellt [ID: {caseid}]", description=f"Für {member.mention} wurde eine Warnung erstellt.", color=disnake.Color.red())
+            warn_embed.set_author(name=member.name, icon_url=avatar_url)
+            warn_embed.add_field(name="Grund", value=reason, inline=False)
+            warn_embed.add_field(name="Warnlevel", value=str(warn_level), inline=False)
+            warn_embed.set_footer(text=f"ID: {member.id} - heute um {(self.globalfile.get_current_time().strftime('%H:%M:%S'))} Uhr")
+            await inter.edit_original_response(embed=warn_embed)
+
+    @commands.slash_command(guild_ids=[854698446996766730])
+    @RoleHierarchy.check_permissions("Moderator")
+    async def timeout_remove(self, inter: disnake.ApplicationCommandInteraction, timeout_id: int, reason: str = commands.Param(name="begründung", description="Grund für das Entfernen des Timeouts", default="Kein Grund angegeben")):
+        """Entfernt einen Timeout basierend auf der Timeout ID."""
+        await inter.response.defer()
+
+        cursor = self.db.connection.cursor()
+        cursor.execute("SELECT * FROM TIMEOUT WHERE ID = ?", (timeout_id,))
+        timeout_record = cursor.fetchone()
+
+        if not timeout_record:
+            await inter.edit_original_response(content=f"Kein Timeout mit der ID {timeout_id} gefunden.")
+            return
+
+        user_id = timeout_record[1]
+        user = await self.bot.fetch_user(user_id)
+
+        try:
+            await user.timeout(duration=None, reason=reason)
+            cursor.execute("UPDATE TIMEOUT SET REMOVED = 1, REMOVEDBY = ?, REMOVEDREASON = ? WHERE ID = ?", (inter.author.id, reason, timeout_id))
+            self.db.connection.commit()
+
+            embed = disnake.Embed(title="Timeout entfernt", description=f"Der Timeout für {user.mention} wurde erfolgreich entfernt.", color=disnake.Color.green())
+            embed.set_author(name=user.name, icon_url=user.avatar.url if user.avatar else user.default_avatar.url)
+            embed.add_field(name="Grund", value=reason, inline=False)
+            await inter.edit_original_response(embed=embed)
+        except disnake.Forbidden:
+            await inter.edit_original_response(content=f"Ich habe keine Berechtigung, den Timeout für {user.mention} zu entfernen.")
+        except disnake.HTTPException as e:
+            await inter.edit_original_response(content=f"Ein Fehler ist aufgetreten: {e}")
 
 def setup(bot: commands.Bot):
     bot.add_cog(MyCommands(bot))

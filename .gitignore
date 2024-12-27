@@ -20,3 +20,5 @@ __pycache__/voice.cpython-312.pyc
 __pycache__/RoleHierarchy.cpython-312.pyc
 __pycache__/reaction.cpython-312.pyc
 *.pyc
+config.env
+token.env

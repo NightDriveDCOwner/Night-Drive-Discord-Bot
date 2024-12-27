@@ -7,6 +7,8 @@ from globalfile import setupGlobal
 from moderation import setupModeration
 from ticket import setupTicket
 from level import setupLevel
+from countbot import setupCountbot
+from auditlog import setupAuditLog
 import disnake
 import logging
 import asyncio
@@ -32,7 +34,8 @@ class DiscordLoggingHandler(logging.Handler):
 root_logger = logging.getLogger()
 for handler in root_logger.handlers[:]:
     root_logger.removeHandler(handler)
-
+    
+load_dotenv(dotenv_path="config.env")
 logging_level = os.getenv("LOGGING_LEVEL", "DEBUG").upper()
 logging.basicConfig(level=logging_level, filename="log.log", filemode="w", format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -56,6 +59,9 @@ setupGlobal(bot)
 setupModeration(bot)
 setupTicket(bot)
 setupLevel(bot)
+setupCountbot(bot)
+setupAuditLog(bot)
 
-
-bot.run("MTIwODE3NTc0ODk4MDkzNjc2NA.GGk_8k.IUe5KR-MSpolnO_I7rGtx5qsE1Tr0M9fyk7gfw")
+load_dotenv(dotenv_path="token.env")
+DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
+bot.run(DISCORD_TOKEN)

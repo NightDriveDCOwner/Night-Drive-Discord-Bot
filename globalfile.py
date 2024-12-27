@@ -149,10 +149,11 @@ class Globalfile(commands.Cog):
         self.user_data.clear()
         self.TimerMustReseted = True   
 
-    async def admin_did_something(self, action: disnake.AuditLogAction, handleduser: Union[disnake.User, disnake.Member]):
+    async def admin_did_something(self, action: disnake.AuditLogAction, guild: disnake.Guild, handleduser: Union[disnake.User, disnake.Member]):
         DeletedbyAdmin = False
-        guild = self.bot.get_guild(854698446996766730)
-        async for entry in guild.audit_logs(limit=5, action=action, after=self.get_current_time() - timedelta(minutes=5)):                                            
+        relevant_entries = []
+        entry: disnake.AuditLogEntry
+        async for entry in guild.audit_logs(limit=5, action=action, after=self.get_current_time() - timedelta(minutes=5)):
             if action == disnake.AuditLogAction.message_delete or action == disnake.AuditLogAction.member_disconnect:
                 if entry.extra.count is not None:
                     if self.TimerMustReseted:
@@ -161,18 +162,14 @@ class Globalfile(commands.Cog):
                     if entry.user.id in self.user_data:
                         if entry.extra.count > self.user_data[entry.user.id]:
                             self.user_data[entry.user.id] = entry.extra.count
-                            DeletedbyAdmin = True
-                            break
-                        else: 
-                            DeletedbyAdmin = False                        
-                            break
+                            relevant_entries.append(entry)
+                        else:
+                            continue
                     else:
                         self.user_data[entry.user.id] = entry.extra.count
-                        DeletedbyAdmin = True
-                        break  
+                        relevant_entries.append(entry)
                 else:
-                    DeletedbyAdmin = False                                
-                    break
+                    continue
             else:
                 if self.TimerMustReseted:
                     self.reset_timer()
@@ -180,19 +177,33 @@ class Globalfile(commands.Cog):
                 if entry.user.id not in self.user_data:
                     self.user_data[entry.user.id] = 1
                 self.user_data[entry.user.id] += 1
-                DeletedbyAdmin = True
-                break  
+                relevant_entries.append(entry)
 
-        if action == disnake.AuditLogAction.message_delete or action == disnake.AuditLogAction.member_disconnect or action == disnake.AuditLogAction.member_update:
-            if DeletedbyAdmin:
-                user = entry.user
-                username = user.name
-                userid = user.id
-            else:
-                user = handleduser
-                username = handleduser.name
-                userid = handleduser.id     
-        return self.UserRecord(user,username,userid)  
+        results = []
+        for entry in relevant_entries:
+            if action == disnake.AuditLogAction.message_delete or action == disnake.AuditLogAction.member_disconnect or action == disnake.AuditLogAction.member_update:
+                if entry in relevant_entries:
+                    user = entry.user
+                    username = user.name
+                    userid = user.id
+                else:
+                    user = handleduser
+                    username = handleduser.name
+                    userid = handleduser.id
+                results.append(self.UserRecord(user, username, userid))
+        
+        # Logge die Änderungen in die Datenbank
+        for entry in relevant_entries:
+            details = f"Action: {action.name}, Target: {entry.target}, Changes: {entry.changes}, Reason: {entry.reason}"
+            await self.log_audit_entry(action.name, entry.user.id, details)
+        
+        return results
+
+    async def log_audit_entry(self, logtype: str, userid: int, details: str):
+        """Loggt einen Audit-Eintrag in die Datenbank."""
+        cursor = self.db.connection.cursor()
+        cursor.execute("INSERT INTO AUDITLOG (LOGTYPE, USERID, DETAILS) VALUES (?, ?, ?)", (logtype, userid, details))
+        self.db.connection.commit()
     
     async def delete_message_by_id(self, channel_id: int, message_id: int):
         """Löscht eine Nachricht basierend auf ihrer ID in einem bestimmten Kanal."""

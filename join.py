@@ -16,7 +16,16 @@ class Join(commands.Cog):
         self.logger.addHandler(handler)
         self.globalfile = Globalfile(bot)
         self.db = DatabaseConnection()
-   
+
+    @commands.Cog.listener()
+    async def on_ready(self):
+        self.bot.add_view(self.create_copy_mention_view())       
+
+    def create_copy_mention_view(self):
+        view = disnake.ui.View(timeout=None)  # Setze die Lebensdauer der View auf unbegrenzt
+        view.add_item(CopyMentionButton())
+        return view
+
     @commands.Cog.listener()
     async def on_member_update(self, before: disnake.Member, after: disnake.Member):
         if before.pending and not after.pending:            
@@ -66,18 +75,8 @@ class Join(commands.Cog):
                 mod_embed.add_field(name="Benutzer ID", value=before.id, inline=True)
                 mod_embed.add_field(name="Erwähnung", value=before.mention, inline=True)
 
-                class CopyMentionButton(disnake.ui.Button):                
-                    def __init__(self, mention):
-                        super().__init__(label="Erwähnung kopieren", style=disnake.ButtonStyle.primary)
-                        self.mention = mention
-                        self.callback = self.on_click
-
-                    async def on_click(self, interaction: disnake.Interaction):
-                        pyperclip.copy(self.mention)
-                        await interaction.response.send_message(f"`{self.mention}` wurde in die Zwischenablage kopiert!", ephemeral=True)
-
                 view = disnake.ui.View(timeout=None)  # Setze die Lebensdauer der View auf unbegrenzt
-                view.add_item(CopyMentionButton(before.mention))
+                view.add_item(CopyMentionButton())
 
                 mod_channel = guild.get_channel(854698447113027594)  # Ersetze durch die ID des Moderatoren-Kanals
                 guild.fetch_members()
@@ -122,7 +121,19 @@ class Join(commands.Cog):
                 await after.send(embed=embed)
                 # Führe hier weitere Aktionen aus, z.B. Rolle hinzufügen oder Datenbank aktualisieren  
             except Exception as e:
-                self.logger.critical(f"Fehler beim Hinzufügen der Rollen: {e}")          
+                self.logger.critical(f"Fehler beim Hinzufügen der Rollen: {e}")  
+                
+class CopyMentionButton(disnake.ui.Button):                
+    def __init__(self):
+        super().__init__(label="Erwähnung kopieren", style=disnake.ButtonStyle.primary, custom_id="copy_mention_button")
+        self.callback = self.on_click
+
+    async def on_click(self, interaction: disnake.Interaction):
+        embed = interaction.message.embeds[0]
+        user_id = embed.fields[1].value  # Annahme: Die User ID ist das zweite Feld im Embed
+        mention = f"<@{user_id}>"
+        pyperclip.copy(mention)
+        await interaction.response.send_message(f"`{mention}` wurde in die Zwischenablage kopiert!", ephemeral=True)                         
 
 def setupJoin(bot):
     bot.add_cog(Join(bot))

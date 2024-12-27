@@ -22,7 +22,7 @@ class VoiceLogging(commands.Cog):
  
 
     @commands.Cog.listener()
-    async def on_voice_state_update(self, member: disnake.member, before: disnake.VoiceState, after: disnake.VoiceState):
+    async def on_voice_state_update(self, member: disnake.Member, before: disnake.VoiceState, after: disnake.VoiceState):
         # Überprüfen, ob der Benutzer einen Voice-Channel betritt
         embed = None
         avatar_url = member.avatar.url if member.avatar else member.default_avatar.url
@@ -43,7 +43,7 @@ class VoiceLogging(commands.Cog):
             embed = create_embed(f"User entered voice channel <#{after.channel.id}>!", 0x4169E1)
         
         elif before.channel is not None and after.channel is None:
-            User = await self.globalfile.admin_did_something(disnake.AuditLogAction.member_disconnect, member)
+            User = await self.globalfile.admin_did_something(disnake.AuditLogAction.member_disconnect, member.guild, member)
             if User.username == member.name:
                 self.logger.info(f"{member.name} hat den Voice-Channel {before.channel.name} verlassen.")
                 embed = create_embed(f"User leaved voice channel <#{before.channel.id}>!", 0xFF0000)
@@ -54,7 +54,7 @@ class VoiceLogging(commands.Cog):
 
         elif before.deaf != after.deaf or before.mute != after.mute or before.self_mute != after.self_mute:
             if after.deaf:
-                User = await self.globalfile.admin_did_something(disnake.AuditLogAction.member_update, member)
+                User = await self.globalfile.admin_did_something(disnake.AuditLogAction.member_update, member.guild, member)
                 if User.username == member.name:
                     self.logger.info(f"{member.name} was generally muted.")
                     embed = create_embed(f"User was generally muted in <#{after.channel.id}>!", 0xFFA500)
@@ -63,7 +63,7 @@ class VoiceLogging(commands.Cog):
                     channel = guild.get_channel(1221018527289577582)
                     embed = create_embed(f"{member.name} was generally muted from {User.username}({User.userid}).", 0xFF0000)                    
             elif after.mute:                
-                User = await self.globalfile.admin_did_something(disnake.AuditLogAction.member_update, member)
+                User = await self.globalfile.admin_did_something(disnake.AuditLogAction.member_update, member.guild, member)
                 self.logger.info(f"{member.name}'s Mikrofon wurde von {User.username}({User.userid}) stummgeschaltet.")
                 channel = guild.get_channel(1221018527289577582)
                 embed = create_embed(f"{member.name} microphone was muted from {User.username}({User.userid}).", 0xFF0000)
@@ -76,7 +76,7 @@ class VoiceLogging(commands.Cog):
                     self.logger.info(f"{member.name} no longer muted.")
                     embed = create_embed(f"User no longer muted <#{after.channel.id}>!", 0x006400)
                 else:
-                    User = await self.globalfile.admin_did_something(disnake.AuditLogAction.member_update, member)
+                    User = await self.globalfile.admin_did_something(disnake.AuditLogAction.member_update, member.guild ,member)
                     self.logger.info(f"{member.name} wurde von {User.username}({User.userid}) entmuted.")
                     channel = guild.get_channel(1221018527289577582)
                     embed = create_embed(f"{member.name} was unmuted from {User.username}({User.userid}).", 0xFF0000)

@@ -64,7 +64,7 @@ class Reaction(commands.Cog):
             if member and message.channel.id != 1208770898832658493 and message.channel.id != 1219347644640530553: 
                 if botrolle not in member.roles:                               
                     try:
-                        User = await self.globalfile_instance.admin_did_something(disnake.AuditLogAction.message_delete, member)
+                        User = await self.globalfile_instance.admin_did_something(disnake.AuditLogAction.message_delete, message.guild, member)
                         avatar_url = member.avatar.url if member.avatar else member.default_avatar.url
 
                         current_datetime = self.globalfile.get_current_time()
