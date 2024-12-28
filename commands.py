@@ -825,10 +825,10 @@ class MyCommands(commands.Cog):
             await inter.edit_original_response(content="Die Timeout-Dauer muss zwischen 60 Sekunden und 28 Tagen liegen.")
             return
 
-        timeout_end_time = disnake.utils.utcnow() + timedelta(seconds=duration_seconds)
+        timeout_end_time = self.globalfile.get_current_time() + timedelta(seconds=duration_seconds)
 
         try:
-            await member.timeout(duration=timeout_end_time, reason=reason)
+            await member.timeout(duration=timedelta(seconds=duration_seconds), reason=reason)
             embed = disnake.Embed(title="Benutzer getimeoutet", description=f"{member.mention} wurde erfolgreich getimeoutet!", color=disnake.Color.red())
             embed.set_author(name=member.name, icon_url=member.avatar.url if member.avatar else member.default_avatar.url)
             embed.add_field(name="Grund", value=reason, inline=False)
@@ -847,9 +847,9 @@ class MyCommands(commands.Cog):
             return
         except disnake.HTTPException as e:
             await inter.edit_original_response(content=f"Ein Fehler ist aufgetreten: {e}")
-            return
 
         if warn:
+            # Warnung erstellen
             if warn_level < 1 or warn_level > 3:
                 await inter.edit_original_response(content="Warnlevel muss zwischen 1 und 3 liegen.")
                 return

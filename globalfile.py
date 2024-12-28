@@ -149,11 +149,10 @@ class Globalfile(commands.Cog):
         self.user_data.clear()
         self.TimerMustReseted = True   
 
-    async def admin_did_something(self, action: disnake.AuditLogAction, guild: disnake.Guild, handleduser: Union[disnake.User, disnake.Member]):
+    async def admin_did_something(self, action: disnake.AuditLogAction, handleduser: Union[disnake.User, disnake.Member]):
         DeletedbyAdmin = False
-        relevant_entries = []
-        entry: disnake.AuditLogEntry
-        async for entry in guild.audit_logs(limit=5, action=action, after=self.get_current_time() - timedelta(minutes=5)):
+        guild = self.bot.get_guild(854698446996766730)
+        async for entry in guild.audit_logs(limit=5, action=action, after=datetime.now() - timedelta(minutes=5)):                                            
             if action == disnake.AuditLogAction.message_delete or action == disnake.AuditLogAction.member_disconnect:
                 if entry.extra.count is not None:
                     if self.TimerMustReseted:
@@ -162,14 +161,18 @@ class Globalfile(commands.Cog):
                     if entry.user.id in self.user_data:
                         if entry.extra.count > self.user_data[entry.user.id]:
                             self.user_data[entry.user.id] = entry.extra.count
-                            relevant_entries.append(entry)
-                        else:
-                            continue
+                            DeletedbyAdmin = True
+                            break
+                        else: 
+                            DeletedbyAdmin = False                        
+                            break
                     else:
                         self.user_data[entry.user.id] = entry.extra.count
-                        relevant_entries.append(entry)
+                        DeletedbyAdmin = True
+                        break  
                 else:
-                    continue
+                    DeletedbyAdmin = False                                
+                    break
             else:
                 if self.TimerMustReseted:
                     self.reset_timer()
@@ -177,27 +180,19 @@ class Globalfile(commands.Cog):
                 if entry.user.id not in self.user_data:
                     self.user_data[entry.user.id] = 1
                 self.user_data[entry.user.id] += 1
-                relevant_entries.append(entry)
+                DeletedbyAdmin = True
+                break  
 
-        results = []
-        for entry in relevant_entries:
-            if action == disnake.AuditLogAction.message_delete or action == disnake.AuditLogAction.member_disconnect or action == disnake.AuditLogAction.member_update:
-                if entry in relevant_entries:
-                    user = entry.user
-                    username = user.name
-                    userid = user.id
-                else:
-                    user = handleduser
-                    username = handleduser.name
-                    userid = handleduser.id
-                results.append(self.UserRecord(user, username, userid))
-        
-        # Logge die Änderungen in die Datenbank
-        for entry in relevant_entries:
-            details = f"Action: {action.name}, Target: {entry.target}, Changes: {entry.changes}, Reason: {entry.reason}"
-            await self.log_audit_entry(action.name, entry.user.id, details)
-        
-        return results
+        if action == disnake.AuditLogAction.message_delete or action == disnake.AuditLogAction.member_disconnect or action == disnake.AuditLogAction.member_update:
+            if DeletedbyAdmin:
+                user = entry.user
+                username = user.name
+                userid = user.id
+            else:
+                user = handleduser
+                username = handleduser.name
+                userid = handleduser.id     
+        return self.UserRecord(user,username,userid)  
 
     async def log_audit_entry(self, logtype: str, userid: int, details: str):
         """Loggt einen Audit-Eintrag in die Datenbank."""

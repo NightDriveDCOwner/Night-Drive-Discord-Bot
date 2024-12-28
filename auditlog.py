@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 import pytz
 import os
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime
 from collections import namedtuple
 from typing import Union
 
@@ -69,7 +69,7 @@ class AuditLog(commands.Cog):
 
         # Überprüfen, ob der Handler bereits hinzugefügt wurde
         if not self.logger.handlers:
-            formatter = logging.Formatter('[%(asctime)s - %(name)s - %(levelname)s]: %(message)s')
+            formatter = logging.Formatter('[%(asctime)s - %(name)s - %(levellevel)s]: %(message)s')
             handler = logging.StreamHandler()
             handler.setFormatter(formatter)
             self.logger.addHandler(handler)
@@ -88,6 +88,7 @@ class AuditLog(commands.Cog):
         self.db.connection.commit()
         load_dotenv(dotenv_path="settings.env")
         self.channel_id = os.getenv("AUDITLOG_CHANNEL_ID")
+        print(f"Loaded channel ID: {self.channel_id}")  # Debug-Ausgabe
 
         self.user_data = {}
         self.TimerMustReseted = True
@@ -104,72 +105,32 @@ class AuditLog(commands.Cog):
         self.TimerMustReseted = True
 
     async def send_audit_log_embed(self, action: disnake.AuditLogAction, entry: disnake.AuditLogEntry):
+        if isinstance(entry.target, disnake.User) or isinstance(entry.target, disnake.Member):
+            author_name = entry.target.name
+            thumbnail_url = entry.user.avatar.url
+        elif isinstance(entry.target, disnake.Guild):
+            author_name = entry.guild.name
+            thumbnail_url = entry.guild.icon.url
+        else:
+            author_name = entry.guild.name
+            thumbnail_url = entry.guild.icon.url
+
         embed = disnake.Embed(
-            title=f"Audit Log: {action.name}",
             description=f"Details: {entry.reason}",
             color=disnake.Color.blue(),
             timestamp=datetime.utcnow()
         )
-        embed.add_field(name="User", value=entry.user.mention, inline=True)
-        embed.add_field(name="Target", value=str(entry.target), inline=True)
+
+        embed.set_author(name=author_name, icon_url=thumbnail_url)
+        embed.add_field(name="Responsible User", value=entry.user.mention, inline=True)
+        embed.add_field(name="Action", value=action.name, inline=True)
         embed.add_field(name="Changes", value=str(entry.changes), inline=False)
 
-        # Replace 'YOUR_CHANNEL_ID' with the ID of the channel where you want to send the embed
-        channel = self.bot.get_channel(self.channel_id)        
+        channel = entry.guild.get_channel(int(self.channel_id))        
         if channel:
             await channel.send(embed=embed)
-
-    async def admin_did_something(self, action: disnake.AuditLogAction, guild: disnake.Guild, handleduser: Union[disnake.User, disnake.Member]):
-        DeletedbyAdmin = False
-        relevant_entries = []
-        entry: disnake.AuditLogEntry
-        async for entry in guild.audit_logs(limit=5, action=action):
-            if action == disnake.AuditLogAction.message_delete or action == disnake.AuditLogAction.member_disconnect:
-                if entry.extra.count is not None:
-                    if self.TimerMustReseted:
-                        self.reset_timer()
-                        self.TimerMustReseted = False
-                    if entry.user.id in self.user_data:
-                        if entry.extra.count > self.user_data[entry.user.id]:
-                            self.user_data[entry.user.id] = entry.extra.count
-                            relevant_entries.append(entry)
-                        else:
-                            continue
-                    else:
-                        self.user_data[entry.user.id] = entry.extra.count
-                        relevant_entries.append(entry)
-                else:
-                    continue
-            else:
-                if self.TimerMustReseted:
-                    self.reset_timer()
-                    self.TimerMustReseted = False
-                if entry.user.id not in self.user_data:
-                    self.user_data[entry.user.id] = 1
-                self.user_data[entry.user.id] += 1
-                relevant_entries.append(entry)
-
-        results = []
-        for entry in relevant_entries:
-            if action == disnake.AuditLogAction.message_delete or action == disnake.AuditLogAction.member_disconnect or action == disnake.AuditLogAction.member_update:
-                if entry in relevant_entries:
-                    user = entry.user
-                    username = user.name
-                    userid = user.id
-                else:
-                    user = handleduser
-                    username = handleduser.name
-                    userid = handleduser.id
-                results.append(self.UserRecord(user, username, userid))
-        
-        # Logge die Änderungen in die Datenbank
-        for entry in relevant_entries:
-            details = f"Action: {action.name}, Target: {entry.target}, Changes: {entry.changes}, Reason: {entry.reason}, Responsible User: {entry.user.name}"
-            await self.log_audit_entry(action.name, entry.user.id, details)
-            await self.send_audit_log_embed(action, entry)
-        
-        return results
-
+        else:
+            self.logger.error(f"Channel with ID {self.channel_id} not found.")
 
     async def log_audit_entry(self, logtype: str, userid: int, details: str):
         """Loggt einen Audit-Eintrag in die Datenbank."""
@@ -178,155 +139,11 @@ class AuditLog(commands.Cog):
         self.db.connection.commit()
 
     @commands.Cog.listener()
-    async def on_guild_channel_create(self, channel):
-        await self.admin_did_something(disnake.AuditLogAction.channel_create, channel.guild, channel.guild.me)
-
-    @commands.Cog.listener()
-    async def on_guild_channel_delete(self, channel):
-        await self.admin_did_something(disnake.AuditLogAction.channel_delete, channel.guild, channel.guild.me)
-
-    @commands.Cog.listener()
-    async def on_guild_channel_update(self, before, after):
-        await self.admin_did_something(disnake.AuditLogAction.channel_update, before.guild, before.guild.me)
-
-    @commands.Cog.listener()
-    async def on_member_ban(self, guild, user):
-        await self.admin_did_something(disnake.AuditLogAction.ban, guild, user)
-
-    @commands.Cog.listener()
-    async def on_member_unban(self, guild, user):
-        await self.admin_did_something(disnake.AuditLogAction.unban, guild, user)
-
-    @commands.Cog.listener()
-    async def on_member_update(self, before, after):
-        await self.admin_did_something(disnake.AuditLogAction.member_update, before.guild, before.guild.me)
-
-    @commands.Cog.listener()
-    async def on_guild_update(self, before, after):
-        await self.admin_did_something(disnake.AuditLogAction.guild_update, before, before.me)
-
-    @commands.Cog.listener()
-    async def on_invite_create(self, invite):
-        await self.admin_did_something(disnake.AuditLogAction.invite_create, invite.guild, invite.inviter)
-
-    @commands.Cog.listener()
-    async def on_invite_delete(self, invite):
-        await self.admin_did_something(disnake.AuditLogAction.invite_delete, invite.guild, invite.inviter)
-
-    @commands.Cog.listener()
-    async def on_webhook_update(self, webhook):
-        await self.admin_did_something(disnake.AuditLogAction.webhook_update, webhook.guild, webhook.user)
-
-    @commands.Cog.listener()
-    async def on_emoji_create(self, emoji):
-        await self.admin_did_something(disnake.AuditLogAction.emoji_create, emoji.guild, emoji.user)
-
-    @commands.Cog.listener()
-    async def on_emoji_delete(self, emoji):
-        await self.admin_did_something(disnake.AuditLogAction.emoji_delete, emoji.guild, emoji.user)
-
-    @commands.Cog.listener()
-    async def on_message_delete(self, message):
-        await self.admin_did_something(disnake.AuditLogAction.message_delete, message.guild, message.author)
-
-    @commands.Cog.listener()
-    async def on_message_bulk_delete(self, messages):
-        for message in messages:
-            await self.admin_did_something(disnake.AuditLogAction.message_bulk_delete, message.guild, message.author)
-
-    @commands.Cog.listener()
-    async def on_message_pin(self, message):
-        await self.admin_did_something(disnake.AuditLogAction.message_pin, message.guild, message.author)
-
-    @commands.Cog.listener()
-    async def on_message_unpin(self, message):
-        await self.admin_did_something(disnake.AuditLogAction.message_unpin, message.guild, message.author)
-
-    @commands.Cog.listener()
-    async def on_integration_create(self, integration):
-        await self.admin_did_something(disnake.AuditLogAction.integration_create, integration.guild, integration.user)
-
-    @commands.Cog.listener()
-    async def on_integration_update(self, integration):
-        await self.admin_did_something(disnake.AuditLogAction.integration_update, integration.guild, integration.user)
-
-    @commands.Cog.listener()
-    async def on_integration_delete(self, integration):
-        await self.admin_did_something(disnake.AuditLogAction.integration_delete, integration.guild, integration.user)
-
-    @commands.Cog.listener()
-    async def on_stage_instance_create(self, stage_instance):
-        await self.admin_did_something(disnake.AuditLogAction.stage_instance_create, stage_instance.guild, stage_instance.user)
-
-    @commands.Cog.listener()
-    async def on_stage_instance_update(self, stage_instance):
-        await self.admin_did_something(disnake.AuditLogAction.stage_instance_update, stage_instance.guild, stage_instance.user)
-
-    @commands.Cog.listener()
-    async def on_stage_instance_delete(self, stage_instance):
-        await self.admin_did_something(disnake.AuditLogAction.stage_instance_delete, stage_instance.guild, stage_instance.user)
-
-    @commands.Cog.listener()
-    async def on_sticker_create(self, sticker):
-        await self.admin_did_something(disnake.AuditLogAction.sticker_create, sticker.guild, sticker.user)
-
-    @commands.Cog.listener()
-    async def on_sticker_update(self, sticker):
-        await self.admin_did_something(disnake.AuditLogAction.sticker_update, sticker.guild, sticker.user)
-
-    @commands.Cog.listener()
-    async def on_sticker_delete(self, sticker):
-        await self.admin_did_something(disnake.AuditLogAction.sticker_delete, sticker.guild, sticker.user)
-
-    @commands.Cog.listener()
-    async def on_guild_scheduled_event_create(self, event):
-        await self.admin_did_something(disnake.AuditLogAction.guild_scheduled_event_create, event.guild, event.creator)
-
-    @commands.Cog.listener()
-    async def on_guild_scheduled_event_update(self, event):
-        await self.admin_did_something(disnake.AuditLogAction.guild_scheduled_event_update, event.guild, event.creator)
-
-    @commands.Cog.listener()
-    async def on_guild_scheduled_event_delete(self, event):
-        await self.admin_did_something(disnake.AuditLogAction.guild_scheduled_event_delete, event.guild, event.creator)
-
-    @commands.Cog.listener()
-    async def on_thread_create(self, thread):
-        await self.admin_did_something(disnake.AuditLogAction.thread_create, thread.guild, thread.owner)
-
-    @commands.Cog.listener()
-    async def on_thread_update(self, thread):
-        await self.admin_did_something(disnake.AuditLogAction.thread_update, thread.guild, thread.owner)
-
-    @commands.Cog.listener()
-    async def on_thread_delete(self, thread):
-        await self.admin_did_something(disnake.AuditLogAction.thread_delete, thread.guild, thread.owner)
-
-    @commands.Cog.listener()
-    async def on_member_prune(self, guild):
-        await self.admin_did_something(disnake.AuditLogAction.member_prune, guild, guild.me)
-
-    @commands.Cog.listener()
-    async def on_member_move(self, member, before, after):
-        await self.admin_did_something(disnake.AuditLogAction.member_move, member.guild, member)
-
-    @commands.Cog.listener()
-    async def on_bot_add(self, member):
-        if member.bot:
-            await self.admin_did_something(disnake.AuditLogAction.bot_add, member.guild, member)
-
-    @commands.Cog.listener()
-    async def on_message_bulk_delete(self, messages):
-        for message in messages:
-            await self.admin_did_something(disnake.AuditLogAction.message_bulk_delete, message.guild, message.author)
-
-    @commands.Cog.listener()
-    async def on_message_pin(self, message):
-        await self.admin_did_something(disnake.AuditLogAction.message_pin, message.guild, message.author)
-
-    @commands.Cog.listener()
-    async def on_message_unpin(self, message):
-        await self.admin_did_something(disnake.AuditLogAction.message_unpin, message.guild, message.author)        
+    async def on_audit_log_entry_create(self, entry: disnake.AuditLogEntry):
+        action = entry.action
+        details = f"Action: {action.name}, Target: {entry.target}, Changes: {entry.changes}, Reason: {entry.reason}, Responsible User: {entry.user.name}"
+        await self.log_audit_entry(action.name, entry.user.id, details)
+        await self.send_audit_log_embed(action, entry)
 
 def setupAuditLog(bot):
     bot.add_cog(AuditLog(bot))
