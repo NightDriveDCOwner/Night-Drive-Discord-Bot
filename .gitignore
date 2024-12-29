@@ -3,12 +3,12 @@ __pycache__/voice.cpython-312.pyc
 __pycache__/voice.cpython-312.pyc
 __pycache__/voice.cpython-312.pyc
 __pycache__/voice.cpython-312.pyc
-__pycache__/RoleHierarchy.cpython-312.pyc
+__pycache__/rolehierarchy.cpython-312.pyc
 __pycache__/reaction.cpython-312.pyc
 __pycache__/moderation.cpython-312.pyc
 __pycache__/join.cpython-312.pyc
 __pycache__/globalfile.cpython-312.pyc
-__pycache__/DBConnection.cpython-312.pyc
+__pycache__/dbconnection.cpython-312.pyc
 __pycache__/commands.cpython-312.pyc
 __pycache__/commands.cpython-312.pyc
 __pycache__/globalfile.cpython-312.pyc
@@ -17,7 +17,7 @@ __pycache__/moderation.cpython-312.pyc
 *.pyc
 log.log
 __pycache__/voice.cpython-312.pyc
-__pycache__/RoleHierarchy.cpython-312.pyc
+__pycache__/rolehierarchy.cpython-312.pyc
 __pycache__/reaction.cpython-312.pyc
 *.pyc
 config.env

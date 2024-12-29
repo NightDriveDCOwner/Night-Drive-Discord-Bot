@@ -13,7 +13,7 @@ class Countbot(commands.Cog):
         logging_level = os.getenv("LOGGING_LEVEL", "INFO").upper() 
         self.logger.setLevel(logging_level)
         self.globalfile = Globalfile(bot)        
-        load_dotenv(dotenv_path="settings.env")
+        load_dotenv(dotenv_path="envs/settings.env")
         self.counting_channel_id = os.getenv("COUNTINGBOT_CHANNEL_ID")
         self.counting_channel_id = int(self.counting_channel_id)
         self.last_correct_number = 0
@@ -45,7 +45,7 @@ class Countbot(commands.Cog):
 
     @commands.Cog.listener()
     async def on_ready(self):
-        print(f"Bot is ready. Monitoring channel ID: {self.counting_channel_id}")
+        self.logger.debug(f"Bot is ready. Monitoring channel ID: {self.counting_channel_id}")
 
     @commands.Cog.listener()
     async def on_message(self, message: disnake.Message):

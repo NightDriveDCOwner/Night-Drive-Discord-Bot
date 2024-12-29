@@ -1,17 +1,21 @@
 import disnake, os, re
 from disnake.ext import commands, tasks
+from disnake.ui import Button, View
 import disnake.file
 import time
 import re
 from globalfile import Globalfile
-from RoleHierarchy import RoleHierarchy
+from rolehierarchy import rolehierarchy
 from datetime import datetime, timedelta, timedelta
 import pytz
 from dotenv import load_dotenv
 import logging
 import sqlite3
-from DBConnection import DatabaseConnection
+from dbconnection import DatabaseConnection
 import asyncio
+import platform
+import psutil
+import time
 
 
 
@@ -27,7 +31,9 @@ class MyCommands(commands.Cog):
         logging_level = os.getenv("LOGGING_LEVEL", "INFO").upper()         
         self.logger.setLevel(logging_level)
         self.globalfile = Globalfile(bot)        
-        load_dotenv(dotenv_path="settings.env")
+        load_dotenv(dotenv_path="envs/settings.env")
+        self.last_info_message = None
+        self.last_info_time = None
 
         # Überprüfen, ob der Handler bereits hinzugefügt wurde
         if not self.logger.handlers:
@@ -41,7 +47,7 @@ class MyCommands(commands.Cog):
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS TIMEOUT (
             ID INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
-            USERID INTEGER,
+            USERID STRING,
             REASON TEXT,
             TIMEOUTTO TEXT,
             IMAGEPATH TEXT,
@@ -55,17 +61,53 @@ class MyCommands(commands.Cog):
     def cog_unload(self):
         Globalfile.unban_task.cancel()        
 
-    @commands.slash_command()
-    @RoleHierarchy.check_permissions("Test-Supporter")
-    async def ping(self, inter: disnake.ApplicationCommandInteraction):
-        """Get the bot's current websocket latency."""
-        await inter.response.send_message(
-            f"Pong! {round(self.bot.latency * 1000)}ms",
-            ephemeral=True
-        )
+    @commands.slash_command(guild_ids=[854698446996766730])
+    async def info(self, inter: disnake.ApplicationCommandInteraction):
+        """Get technical information about the bot and server."""
+        await inter.response.defer(ephemeral=True)
+
+        # Check cooldown
+        if self.last_info_time and (time.time() - self.last_info_time < 300):
+            await inter.edit_original_response(content=f"Bitte warte noch {300 - int(time.time() - self.last_info_time)} Sekunden, bevor du diesen Befehl erneut verwendest. [Letzte Nachricht]({self.last_info_message.jump_url})")
+            return
+
+        # Gather technical information
+        programming_language = "Python"
+        guild = inter.guild
+        author = inter.guild.owner.mention
+        server_os = platform.system()
+        guild_info = {
+            "user_count": guild.member_count,
+            "boosts": guild.premium_subscription_count,
+            "bots": sum(1 for member in guild.members if member.bot),
+            "created_date": guild.created_at.strftime('%Y-%m-%d %H:%M:%S'),
+            "owner": guild.owner.mention,
+            "guild_lang": guild.preferred_locale
+        }
+        meta_info = {
+            "uptime": time.time() - psutil.boot_time(),
+            "system_cpu_time": psutil.cpu_times().system,
+            "user_cpu_time": psutil.cpu_times().user,
+            "ram_usage": psutil.virtual_memory().used / (1024 ** 3),  # in GB
+            "bot_verified": False
+        }
+
+        # Create embed
+        embed = disnake.Embed(title="Technische Informationen", color=disnake.Color.blue())
+        embed.add_field(name="💻 **Programmiersprache**", value=programming_language, inline=True)
+        embed.add_field(name="👤 **Autor**", value=author, inline=True)
+        embed.add_field(name="🖥️ **Betriebssystem**", value=server_os, inline=True)
+        embed.add_field(name="🏰 **Gilde**", value=f"Useranzahl: {guild_info['user_count']}\nBoosts: {guild_info['boosts']}\nBots: {guild_info['bots']}\nErstellt am: {guild_info['created_date']}\nBesitzer: {guild_info['owner']}\nSprache: {guild_info['guild_lang']}", inline=False)
+        embed.add_field(name="📊 **Meta**", value=f"Uptime: {meta_info['uptime'] // 3600:.0f} Stunden\nSystem CPU Zeit: {meta_info['system_cpu_time']:.2f} Sekunden\nUser CPU Zeit: {meta_info['user_cpu_time']:.2f} Sekunden\nRAM Nutzung: {meta_info['ram_usage']:.2f} GB\nBot Verifiziert: {meta_info['bot_verified']}", inline=False)
+
+        message = await inter.edit_original_response(embed=embed)
+
+        # Update cooldown
+        self.last_info_message = message
+        self.last_info_time = time.time()
 
     @commands.slash_command(guild_ids=[854698446996766730])
-    @RoleHierarchy.check_permissions("Test-Supporter")
+    @rolehierarchy.check_permissions("Test-Supporter")
     async def server(inter: disnake.ApplicationCommandInteraction):
         await inter.response.send_message(
             f"Server name: {inter.guild.name}\nTotal members: {inter.guild.member_count}",
@@ -80,7 +122,7 @@ class MyCommands(commands.Cog):
         )                                   
                        
     @commands.slash_command(guild_ids=[854698446996766730])
-    @RoleHierarchy.check_permissions("Sr. Supporter")
+    @rolehierarchy.check_permissions("Senior Supporter")
     async def ban(self, 
                   inter: disnake.ApplicationCommandInteraction, 
                   member: disnake.Member = commands.Param(name="benutzer", description="Der Benutzer, der gebannt werden soll."), 
@@ -150,7 +192,7 @@ class MyCommands(commands.Cog):
             self.logger.info(f"User {member.id} ban not possible. User is already banned.")
 
     @commands.slash_command(guild_ids=[854698446996766730])
-    @RoleHierarchy.check_permissions("Sr. Supporter")
+    @rolehierarchy.check_permissions("Senior Supporter")
     async def unban(self, inter: disnake.ApplicationCommandInteraction, 
                     userid: int = commands.param(name="userid", description="Hier kannst du die UserID unserer Datenbank angeben.", default=0), 
                     username: str = commands.Param(name="username", description="Hier kannst du den Benutzernamen angeben, falls die UserID nicht bekannt ist.", default=""), 
@@ -192,7 +234,7 @@ class MyCommands(commands.Cog):
             await inter.edit_original_response(content=f"Ein Fehler ist aufgetreten: {e}")
 
     @commands.slash_command(guild_ids=[854698446996766730])
-    @RoleHierarchy.check_permissions("Sr. Supporter")
+    @rolehierarchy.check_permissions("Senior Supporter")
     async def list_banned_users(self, inter: disnake.ApplicationCommandInteraction):
         """Listet alle gebannten Benutzer auf und zeigt den Entbannzeitpunkt an, falls vorhanden."""
         await inter.response.defer(ephemeral=True)  # Verzögere die Interaktion        
@@ -229,7 +271,7 @@ class MyCommands(commands.Cog):
         await inter.edit_original_response(embed=embed)
 
     @commands.slash_command(guild_ids=[854698446996766730])
-    @RoleHierarchy.check_permissions("Moderator")
+    @rolehierarchy.check_permissions("Moderator")
     async def badword_add(self, inter: disnake.ApplicationCommandInteraction, word: str):
         """Füge ein Wort zur Badword-Liste hinzu, wenn es noch nicht existiert."""
         await inter.response.defer()  # Verzögere die Interaktion
@@ -254,7 +296,7 @@ class MyCommands(commands.Cog):
         await inter.edit_original_response(embed=embed)
             
     @commands.slash_command(guild_ids=[854698446996766730])
-    @RoleHierarchy.check_permissions("Moderator")
+    @rolehierarchy.check_permissions("Moderator")
     async def badword_remove(self, inter: disnake.ApplicationCommandInteraction, word: str):
         """Entferne ein Wort von der Badword-Liste."""
         await inter.response.defer()  # Verzögere die Interaktion
@@ -279,7 +321,7 @@ class MyCommands(commands.Cog):
         await inter.edit_original_response(embed=embed)
 
     @commands.slash_command(guild_ids=[854698446996766730])
-    @RoleHierarchy.check_permissions("Moderator")
+    @rolehierarchy.check_permissions("Moderator")
     async def badwords_list(self, inter: disnake.ApplicationCommandInteraction):
         """Zeige die aktuelle Badword-Liste."""
         await inter.response.defer()  # Verzögere die Interaktion
@@ -301,7 +343,7 @@ class MyCommands(commands.Cog):
         await inter.edit_original_response(embed=embed)
 
     @commands.slash_command(guild_ids=[854698446996766730])
-    @RoleHierarchy.check_permissions("Test-Supporter")
+    @rolehierarchy.check_permissions("Test-Supporter")
     async def add_user_to_ticket(self, inter: disnake.ApplicationCommandInteraction, ticket_id: int, user: disnake.User):
         """Fügt einen Benutzer zu einem Ticket-Channel hinzu."""
         await inter.response.defer()         
@@ -329,7 +371,7 @@ class MyCommands(commands.Cog):
             await inter.edit_original_response(f"Fehler beim Hinzufügen des Benutzers: {e}") 
 
     @commands.slash_command(guild_ids=[854698446996766730])
-    @RoleHierarchy.check_permissions("Test-Supporter")
+    @rolehierarchy.check_permissions("Test-Supporter")
     async def note_add(self, inter: disnake.ApplicationCommandInteraction, user: disnake.User, reason: str, proof: disnake.Attachment = None, show: str = "True"):
         """Erstellt eine Notiz für einen Benutzer."""
         await inter.response.defer()           
@@ -363,7 +405,7 @@ class MyCommands(commands.Cog):
         await inter.edit_original_response(embed=embed)
 
     @commands.slash_command(guild_ids=[854698446996766730])
-    @RoleHierarchy.check_permissions("Sr. Supporter")
+    @rolehierarchy.check_permissions("Senior Supporter")
     async def note_delete(self, inter: disnake.ApplicationCommandInteraction, caseid: int):
         """Löscht eine Note basierend auf der Note ID."""
         await inter.response.defer()        
@@ -381,7 +423,7 @@ class MyCommands(commands.Cog):
             self.logger.critical(f"An error occurred: {e}")
 
     @commands.slash_command(guild_ids=[854698446996766730])
-    @RoleHierarchy.check_permissions("Test-Supporter")
+    @rolehierarchy.check_permissions("Test-Supporter")
     async def warn_add(self, inter: disnake.ApplicationCommandInteraction, user: disnake.User, reason: str, level: int = 1, proof: disnake.Attachment = None, show: str = "True"):
         """Erstellt eine Warnung für einen Benutzer."""
         # Überprüfe, ob ein Attachment in der Nachricht vorhanden ist
@@ -437,7 +479,7 @@ class MyCommands(commands.Cog):
         await inter.edit_original_response(embed=embed)
 
     @commands.slash_command(guild_ids=[854698446996766730])
-    @RoleHierarchy.check_permissions("Sr. Supporter")
+    @rolehierarchy.check_permissions("Moderator")
     async def warn_delete(self, inter: disnake.ApplicationCommandInteraction, caseid: int):
         """Löscht eine Warn basierend auf der Warn ID und setzt das Warnlevel zurück."""
         await inter.response.defer()        
@@ -475,7 +517,7 @@ class MyCommands(commands.Cog):
             self.logger.critical(f"An error occurred: {e}")
 
     @commands.slash_command(guild_ids=[854698446996766730])
-    @RoleHierarchy.check_permissions("Test-Supporter")
+    @rolehierarchy.check_permissions("Test-Supporter")
     async def user_profile(self, inter: disnake.ApplicationCommandInteraction, user: disnake.User):
         """Zeigt das Profil eines Benutzers an, einschließlich Notizen und Warnungen."""
         await inter.response.defer()
@@ -538,14 +580,14 @@ class MyCommands(commands.Cog):
         await inter.edit_original_response(embed=embed)
 
     @commands.slash_command(guild_ids=[854698446996766730])
-    @RoleHierarchy.check_permissions("Administrator") # Stellen Sie sicher, dass nur autorisierte Personen diesen Befehl ausführen können
+    @rolehierarchy.check_permissions("Administrator") # Stellen Sie sicher, dass nur autorisierte Personen diesen Befehl ausführen können
     async def disconnect(self, inter: disnake.ApplicationCommandInteraction):
         """Schließt alle Verbindungen des Bots und beendet den Bot-Prozess."""
         await inter.response.send_message("Der Bot wird nun alle Verbindungen schließen und beendet werden.", ephemeral=True)
         await self.bot.close()
 
     @commands.slash_command(guild_ids=[854698446996766730])
-    @RoleHierarchy.check_permissions("Moderator")
+    @rolehierarchy.check_permissions("Senior Moderator")
     async def sync_users(self, inter: disnake.ApplicationCommandInteraction):
         """Synchronisiere alle Benutzer des Servers mit der Users Tabelle."""
         await inter.response.defer()
@@ -574,7 +616,7 @@ class MyCommands(commands.Cog):
         await inter.edit_original_response(content="Benutzer-Synchronisation abgeschlossen.")
 
     @commands.slash_command(guild_ids=[854698446996766730])
-    @RoleHierarchy.check_permissions("Leitung")
+    @rolehierarchy.check_permissions("Co. Owner")
     async def delete_old_messages(self, inter: disnake.ApplicationCommandInteraction):
         """Löscht alle Nachrichten, die älter als sieben Tage sind, aus der Datenbank."""
         await inter.response.defer()
@@ -600,7 +642,7 @@ class MyCommands(commands.Cog):
         await inter.edit_original_response(content="Alle Nachrichten, die älter als sieben Tage sind, wurden aus der Datenbank gelöscht.")
              
     @commands.slash_command(guild_ids=[854698446996766730])
-    @RoleHierarchy.check_permissions("Administrator")
+    @rolehierarchy.check_permissions("Co. Owner")
     async def remove_role_from_all(self, inter: disnake.ApplicationCommandInteraction, role: disnake.Role):
         """Entfernt eine bestimmte Rolle bei allen Benutzern in der Gilde."""
         await inter.response.defer()
@@ -623,7 +665,7 @@ class MyCommands(commands.Cog):
         await inter.edit_original_response(content=f"Die Rolle {role.name} wurde bei {removed_count} Benutzern entfernt.")
 
     @commands.slash_command(guild_ids=[854698446996766730])
-    @RoleHierarchy.check_permissions("Administrator")
+    @rolehierarchy.check_permissions("Administrator")
     async def unban_all_users(self, inter: disnake.ApplicationCommandInteraction):
         """Entbannt alle gebannten Benutzer in der Gilde."""
         await inter.response.defer()
@@ -653,7 +695,7 @@ class MyCommands(commands.Cog):
             await inter.edit_original_response(content=f"Ein Fehler ist aufgetreten: {e}")
   
     @commands.slash_command(guild_ids=[854698446996766730])
-    @RoleHierarchy.check_permissions("Leitung")
+    @rolehierarchy.check_permissions("Co. Owner")
     async def kick_inactive_users(self, inter: disnake.ApplicationCommandInteraction, months: int, execute: bool = False):
         """Kicke alle Benutzer, die innerhalb der angegebenen Monate keine Nachrichten geschrieben haben."""
         await inter.response.defer()
@@ -790,7 +832,7 @@ class MyCommands(commands.Cog):
                 self.logger.warning(f"Fehler beim Durchsuchen der Nachrichten in Kanal {channel.name}: {e}")
 
     @commands.slash_command(guild_ids=[854698446996766730])
-    @RoleHierarchy.check_permissions("Leitung")
+    @rolehierarchy.check_permissions("Leitung")
     async def test_kick(self, inter: disnake.ApplicationCommandInteraction, member: disnake.Member):
         """Testet das Senden einer Nachricht an einen Benutzer."""
         await inter.response.defer()        
@@ -809,7 +851,7 @@ class MyCommands(commands.Cog):
         await inter.edit_original_response(content=f"Test kick für {member.mention} wurde durchgeführt.")
         
     @commands.slash_command(guild_ids=[854698446996766730])
-    @RoleHierarchy.check_permissions("Sr. Supporter")
+    @rolehierarchy.check_permissions("Senior Supporter")
     async def timeout(self, inter: disnake.ApplicationCommandInteraction, 
                         member: disnake.Member, 
                         duration: str = commands.Param(name="dauer", description="Dauer des Timeouts in Sek., Min., Std., Tagen oder Jahre.(Bsp.: 0s0m0h0d0j)"),
@@ -891,7 +933,7 @@ class MyCommands(commands.Cog):
             await inter.edit_original_response(embed=warn_embed)
 
     @commands.slash_command(guild_ids=[854698446996766730])
-    @RoleHierarchy.check_permissions("Moderator")
+    @rolehierarchy.check_permissions("Moderator")
     async def timeout_remove(self, inter: disnake.ApplicationCommandInteraction, timeout_id: int, reason: str = commands.Param(name="begründung", description="Grund für das Entfernen des Timeouts", default="Kein Grund angegeben")):
         """Entfernt einen Timeout basierend auf der Timeout ID."""
         await inter.response.defer()
@@ -921,5 +963,157 @@ class MyCommands(commands.Cog):
         except disnake.HTTPException as e:
             await inter.edit_original_response(content=f"Ein Fehler ist aufgetreten: {e}")
 
-def setup(bot: commands.Bot):
+    @commands.slash_command(guild_ids=[854698446996766730])
+    async def help_moderation(self, inter: disnake.ApplicationCommandInteraction):
+        """Zeigt alle Moderationsbefehle an."""
+        await inter.response.defer(ephemeral=True)
+        commands_list = [
+            {"name": "ban", "description": "Banne einen Benutzer und speichere ein Bild als Beweis.", "rank": "Senior Supporter"},
+            {"name": "unban", "description": "Entbanne einen Benutzer von diesem Server.", "rank": "Senior Supporter"},
+            {"name": "list_banned_users", "description": "Listet alle gebannten Benutzer auf und zeigt den Entbannzeitpunkt an, falls vorhanden.", "rank": "Senior Supporter"},
+            {"name": "note_add", "description": "Erstellt eine Notiz für einen Benutzer.", "rank": "Test-Supporter"},
+            {"name": "note_delete", "description": "Löscht eine Note basierend auf der Note ID.", "rank": "Senior Supporter"},
+            {"name": "warn_add", "description": "Erstellt eine Warnung für einen Benutzer.", "rank": "Test-Supporter"},
+            {"name": "warn_delete", "description": "Löscht eine Warn basierend auf der Warn ID und setzt das Warnlevel zurück.", "rank": "Senior Supporter"},
+            {"name": "timeout", "description": "Timeout einen Benutzer für eine bestimmte Dauer und optional eine Warnung erstellen.", "rank": "Senior Supporter"},
+            {"name": "timeout_remove", "description": "Entfernt einen Timeout basierend auf der Timeout ID.", "rank": "Moderator"},
+            {"name": "badword_add", "description": "Füge ein Wort zur Badword-Liste hinzu, wenn es noch nicht existiert.", "rank": "Moderator"},
+            {"name": "badword_remove", "description": "Entferne ein Wort von der Badword-Liste.", "rank": "Moderator"},
+            {"name": "badwords_list", "description": "Zeige die aktuelle Badword-Liste.", "rank": "Moderator"},
+            {"name": "kick_inactive_users", "description": "Kicke alle Benutzer, die innerhalb der angegebenen Monate keine Nachrichten geschrieben haben.", "rank": "Leitung"},
+            {"name": "remove_role_from_all", "description": "Entfernt eine bestimmte Rolle bei allen Benutzern in der Gilde.", "rank": "Administrator"},
+            {"name": "unban_all_users", "description": "Entbannt alle gebannten Benutzer in der Gilde.", "rank": "Administrator"},
+            {"name": "delete_old_messages", "description": "Löscht alle Nachrichten, die älter als sieben Tage sind, aus der Datenbank.", "rank": "Leitung"},
+            {"name": "sync_users", "description": "Synchronisiere alle Benutzer des Servers mit der Users Tabelle.", "rank": "Moderator"},
+            {"name": "disconnect", "description": "Schließt alle Verbindungen des Bots und beendet den Bot-Prozess.", "rank": "Administrator"}
+        ]
+
+        await self.paginate_commands(inter, commands_list, "Moderationsbefehle")
+
+    @commands.slash_command(guild_ids=[854698446996766730])
+    async def help_user(self, inter: disnake.ApplicationCommandInteraction):
+        """Zeigt alle Benutzerbefehle an."""
+        await inter.response.defer(ephemeral=True)
+        commands_list = [
+            {"name": "ping", "description": "Get the bot's current websocket latency.", "rank": "Test-Supporter"},
+            {"name": "server", "description": "Get the server's name and member count.", "rank": "Test-Supporter"},
+            {"name": "user", "description": "Get your tag and ID.", "rank": "Test-Supporter"},
+            {"name": "add_user_to_ticket", "description": "Fügt einen Benutzer zu einem Ticket-Channel hinzu.", "rank": "Test-Supporter"},
+            {"name": "user_profile", "description": "Zeigt das Profil eines Benutzers an, einschließlich Notizen und Warnungen.", "rank": "Test-Supporter"}
+        ]
+
+        await self.paginate_commands(inter, commands_list, "Benutzerbefehle")
+
+    async def paginate_commands(self, inter: disnake.ApplicationCommandInteraction, commands_list, title):
+        MAX_COMMANDS_PER_PAGE = 5
+
+        def get_role_mention(role_name):
+            role = disnake.utils.get(inter.guild.roles, name=role_name)
+            return role.mention if role else role_name
+
+        def create_embed(page):
+            embed = disnake.Embed(title=title, color=disnake.Color.blue())
+            start = page * MAX_COMMANDS_PER_PAGE
+            end = start + MAX_COMMANDS_PER_PAGE
+            for command in commands_list[start:end]:
+                embed.add_field(
+                    name=f"📜 {command['name']}",
+                    value=f"📝 {command['description']}\n🔒 Rang: {get_role_mention(command['rank'])}",
+                    inline=False
+                )
+            embed.set_footer(text=f"Seite {page + 1} von {len(commands_list) // MAX_COMMANDS_PER_PAGE + 1}")
+            return embed
+
+        async def update_embed(interaction, page):
+            embed = create_embed(page)
+            await interaction.response.edit_message(embed=embed, view=create_view(page))
+
+        def create_view(page):
+            view = View()
+            if page > 0:
+                view.add_item(Button(label="Zurück", style=disnake.ButtonStyle.primary, custom_id=f"prev_{page}"))
+            if (page + 1) * MAX_COMMANDS_PER_PAGE < len(commands_list):
+                view.add_item(Button(label="Weiter", style=disnake.ButtonStyle.primary, custom_id=f"next_{page}"))
+            return view
+
+        current_page = 0
+        embed = create_embed(current_page)
+        view = create_view(current_page)
+
+        message = await inter.edit_original_response(embed=embed, view=view)
+
+        def check(interaction: disnake.MessageInteraction):
+            return interaction.message.id == message.id and interaction.user.id == inter.user.id
+
+        while True:
+            interaction = await self.bot.wait_for("interaction", check=check)
+            if interaction.data["custom_id"].startswith("prev_"):
+                current_page -= 1
+            elif interaction.data["custom_id"].startswith("next_"):
+                current_page += 1
+            await update_embed(interaction, current_page)
+
+    @commands.slash_command(guild_ids=[854698446996766730])
+    @rolehierarchy.check_permissions("Supporter")
+    async def verify_user(self, inter: disnake.ApplicationCommandInteraction, user: disnake.User, proof: disnake.Attachment):
+        """Verifiziert einen Benutzer, speichert ein Bild und gibt ihm die Rolle 'Verified'."""
+        await inter.response.defer()
+
+        # Überprüfe, ob ein Attachment in der Nachricht vorhanden ist
+        image_path = None
+        if proof:
+            image_path = await self.globalfile.save_image(proof, f"{user.id}_verification")
+
+        # Hole die Benutzerinformationen aus der Tabelle User
+        userrecord = self.globalfile.get_user_record(discordid=user.id)
+
+        cursor = self.db.connection.cursor()
+        cursor.execute("UPDATE USER SET verified = 1, imagepath = ? WHERE ID = ?", (image_path, userrecord['ID']))
+        self.db.connection.commit()
+
+        # Rolle "Verified" hinzufügen
+        verified_role = disnake.utils.get(inter.guild.roles, name="Verified")
+        if verified_role:
+            await user.add_roles(verified_role)
+            await inter.edit_original_response(content=f"{user.mention} wurde verifiziert und die Rolle <@1066793314482913391> wurde hinzugefügt.")
+        else:
+            await inter.edit_original_response(content="Die Rolle 'Verified' wurde nicht gefunden.")    
+            
+    @commands.slash_command(guild_ids=[854698446996766730])
+    @rolehierarchy.check_permissions("Supporter")
+    async def add_verify_image(self, inter: disnake.ApplicationCommandInteraction, user: disnake.User, proof: disnake.Attachment):
+        """Fügt ein weiteres Bild zu einem Benutzer hinzu."""
+        await inter.response.defer()
+
+        # Überprüfe, ob ein Attachment in der Nachricht vorhanden ist
+        if not proof:
+            await inter.edit_original_response(content="Bitte füge ein Bild hinzu.")
+            return
+
+        # Hole die Benutzerinformationen aus der Tabelle User
+        userrecord = self.globalfile.get_user_record(discordid=user.id)
+
+        # Hole den aktuellen Bildpfad
+        cursor = self.db.connection.cursor()
+        cursor.execute("SELECT imagepath FROM USER WHERE ID = ?", (userrecord['ID'],))
+        current_imagepath = cursor.fetchone()[0]
+
+        # Bestimme den neuen Bildpfad
+        base_path = f"{user.id}_verification"
+        if current_imagepath:
+            image_paths = current_imagepath.split(';')
+            new_image_index = len(image_paths)
+            new_image_path = await self.globalfile.save_image(proof, f"{base_path}_{new_image_index}")
+            updated_imagepath = f"{current_imagepath};{new_image_path}"
+        else:
+            new_image_path = await self.globalfile.save_image(proof, base_path)
+            updated_imagepath = new_image_path
+
+        # Aktualisiere den Bildpfad in der Datenbank
+        cursor.execute("UPDATE USER SET imagepath = ? WHERE ID = ?", (updated_imagepath, userrecord['ID']))
+        self.db.connection.commit()
+
+        await inter.edit_original_response(content=f"Ein weiteres Bild wurde für {user.mention} hinzugefügt.")                        
+
+def setupCommands(bot: commands.Bot):
     bot.add_cog(MyCommands(bot))

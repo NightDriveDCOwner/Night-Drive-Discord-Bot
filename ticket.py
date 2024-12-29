@@ -2,8 +2,8 @@ import disnake
 from disnake.ext import commands
 import sqlite3
 import logging
-from DBConnection import DatabaseConnection
-from RoleHierarchy import RoleHierarchy
+from dbconnection import DatabaseConnection
+from rolehierarchy import rolehierarchy
 
 class Ticket(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -40,6 +40,7 @@ class Ticket(commands.Cog):
         self.bot.add_view(self.create_bewerbung_view())
         self.bot.add_view(self.create_ticket_view())
         self.bot.add_view(self.create_admin_ticket_view())
+        self.bot.add_view(self.create_verify_ticket_view())
 
     def create_bewerbung_view(self):
         bewerbung_button = disnake.ui.Button(label="Bewerbung erstellen", style=disnake.ButtonStyle.blurple, custom_id="bewerbung_button")
@@ -59,6 +60,12 @@ class Ticket(commands.Cog):
         admin_ticket_view.add_item(admin_ticket_button)
         return admin_ticket_view
     
+    def create_verify_ticket_view(self):
+        verify_ticket_button = disnake.ui.Button(label="Verify Ticket erstellen", style=disnake.ButtonStyle.green, custom_id="verify_ticket_button")
+        verify_ticket_view = disnake.ui.View(timeout=None)
+        verify_ticket_view.add_item(verify_ticket_button)
+        return verify_ticket_view    
+    
     @commands.Cog.listener()
     async def on_interaction(self, interaction: disnake.Interaction):
         if interaction.type == disnake.InteractionType.component:
@@ -69,6 +76,8 @@ class Ticket(commands.Cog):
                 await self.ticket_button_callback(interaction)
             elif custom_id == "admin_ticket_button":
                 await self.admin_ticket_button_callback(interaction)
+            elif custom_id == "verify_ticket_button":
+                await self.verify_ticket_button_callback(interaction)                
             elif custom_id.startswith("claim_button_"):
                 ticket_id = int(custom_id.split("_")[-1])
                 await self.claim_ticket(interaction, ticket_id, interaction.user.id)
@@ -144,12 +153,17 @@ class Ticket(commands.Cog):
         claim_view = disnake.ui.View(timeout=None)
         claim_view.add_item(claim_button)
         claim_view.add_item(close_button)
-
+        
+        if ticket_type.lower() == "verify ticket":
+            content = ("bitte schicke uns ein Bild von dir mit einem Zettel, auf dem dein Discord-Tag und das aktuelle Datum geschrieben sind. "
+                       "Außerdem benötigen wir ein Bild von deinem Personalausweis oder Reisepass, auf dem dein Geburtsdatum und Vorname sichtbar sind.")
+        else:
+            content = ("bitte beschreibe dein Anliegen so detailliert wie möglich, damit wir dir schnell und "
+                       "effektiv helfen können.")
         # Create the embed for the message
         ticket_embed = disnake.Embed(
             title="Neues Ticket",
-            description=f"{interaction.user.mention}, bitte beschreibe dein Anliegen so detailliert wie möglich, damit wir dir schnell und "
-                "effektiv helfen können.",
+            description=f"{interaction.user.mention}, {content}",
             color=0x00ff00
         )        
         # Send the message in the new channel
@@ -157,7 +171,7 @@ class Ticket(commands.Cog):
         await interaction.response.send_message(f"Dein Ticket wurde erfolgreich erstellt. {ticket_channel.mention}", ephemeral=True)   
 
     async def claim_ticket(self, interaction: disnake.Interaction, ticket_id: int, user_id: int):
-        role_hierarchy = RoleHierarchy()
+        role_hierarchy = rolehierarchy()
         if not role_hierarchy.has_role_or_higher(interaction.author, "Supporter"):
             await interaction.response.send_message("Du hast nicht die erforderlichen Berechtigungen, um dieses Ticket zu claimen.", ephemeral=True)
             return
@@ -199,6 +213,9 @@ class Ticket(commands.Cog):
 
     async def admin_ticket_button_callback(self, interaction: disnake.Interaction):
         await self.create_ticket_channel(interaction, "Admin Ticket")
+        
+    async def verify_ticket_button_callback(self, interaction: disnake.Interaction):
+        await self.create_ticket_channel(interaction, "Verify Ticket")        
 
     # Modify the create_ticket_embeds method to use the new callbacks
     @commands.slash_command(guild_ids=[854698446996766730])
@@ -245,10 +262,25 @@ class Ticket(commands.Cog):
         )
         admin_ticket_embed.set_author(name="Aincrad", icon_url=guild.icon.url if guild.icon else None)
         admin_ticket_view = self.create_admin_ticket_view()
+        
+        verify_ticket_embed = disnake.Embed(
+            title="Verify Ticket",
+            description=(
+                "Erstelle ein Verify-Ticket, um dich zu verifizieren. "
+                "Im Zuge des Tickets wirst du aufgefordert, persönliche Informationen anzugeben, um deine Identität zu bestätigen. "
+                "Du wirst gebeten, ein Bild von dir mit einem Zettel zu senden, auf dem dein Discord-Tag und das aktuelle "
+                "Datum geschrieben sind sowie sowie ein geschwärztes Bild (außer Geburtsdatum und Vorname) von deinem Personalausweis oder Reisepass. "
+                "Im Zuge des Tickets beantworten wir dir Fragen zu der Notwendigkeit der Verifizierung und der Erhebung dieser Informationen. "
+            ),
+            color=0x0080FF
+        )        
+        verify_ticket_embed.set_author(name="Aincrad", icon_url=guild.icon.url if guild.icon else None)
+        verify_ticket_view = self.create_verify_ticket_view()
 
         await self.check_and_update_message(channel, bewerbung_embed, "Bewerbung", bewerbung_view)
         await self.check_and_update_message(channel, ticket_embed, "Ticket", ticket_view)
         await self.check_and_update_message(channel, admin_ticket_embed, "Admin Ticket", admin_ticket_view)
+        await self.check_and_update_message(self.bot.get_channel(1323005558730657812), verify_ticket_embed, "Verify Ticket", verify_ticket_view)        
 
         await inter.edit_original_response(content="Ticket Embeds wurden erstellt/aktualisiert.")
 

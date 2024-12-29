@@ -2,7 +2,7 @@ import disnake
 from disnake.ext import commands
 import logging
 from globalfile import Globalfile
-from DBConnection import DatabaseConnection
+from dbconnection import DatabaseConnection
 from dotenv import load_dotenv
 import pytz
 import os
@@ -69,7 +69,7 @@ class AuditLog(commands.Cog):
 
         # Überprüfen, ob der Handler bereits hinzugefügt wurde
         if not self.logger.handlers:
-            formatter = logging.Formatter('[%(asctime)s - %(name)s - %(levellevel)s]: %(message)s')
+            formatter = logging.Formatter('[%(asctime)s - %(name)s - %(levelname)s]: %(message)s')
             handler = logging.StreamHandler()
             handler.setFormatter(formatter)
             self.logger.addHandler(handler)
@@ -86,9 +86,9 @@ class AuditLog(commands.Cog):
             )
         """)
         self.db.connection.commit()
-        load_dotenv(dotenv_path="settings.env")
+        load_dotenv(dotenv_path="envs/settings.env")
         self.channel_id = os.getenv("AUDITLOG_CHANNEL_ID")
-        print(f"Loaded channel ID: {self.channel_id}")  # Debug-Ausgabe
+        self.logger.debug(f"Loaded channel ID: {self.channel_id}")  # Debug-Ausgabe
 
         self.user_data = {}
         self.TimerMustReseted = True

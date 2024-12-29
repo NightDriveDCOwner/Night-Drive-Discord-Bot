@@ -7,7 +7,7 @@ import asyncio
 import pytz
 import re
 from typing import Union
-from DBConnection import DatabaseConnection
+from dbconnection import DatabaseConnection
 
 
 class Globalfile(commands.Cog):
