@@ -2,9 +2,10 @@ import disnake
 from disnake.ext import commands
 import logging
 import sqlite3
-from DBConnection import DatabaseConnection
+from dbconnection import DatabaseConnection
 from globalfile import Globalfile
 import pyperclip
+import openai
 
 class Join(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -16,9 +17,40 @@ class Join(commands.Cog):
         self.logger.addHandler(handler)
         self.globalfile = Globalfile(bot)
         self.db = DatabaseConnection()
-   
+        if not self.logger.handlers:
+            formatter = logging.Formatter('[%(asctime)s - %(name)s - %(levelname)s]: %(message)s')
+            handler = logging.StreamHandler()
+            handler.setFormatter(formatter)
+            self.logger.addHandler(handler)        
+
     @commands.Cog.listener()
-    async def on_member_update(self, before: disnake.Member, after: disnake.Member):
+    async def on_ready(self):
+        self.bot.add_view(self.create_copy_mention_view())       
+
+    def create_copy_mention_view(self):
+        view = disnake.ui.View(timeout=None)  # Setze die Lebensdauer der View auf unbegrenzt
+        view.add_item(CopyMentionButton())
+        return view
+
+    async def generate_welcome_message(self, user: disnake.Member) -> str:
+        context = f"Dies ist ein Community-Discord-Server-Bot namens Cardinal System für den Server '{user.guild.name}'. Der Bot interagiert freundlich und kumpelhaft mit den Benutzern. Erstelle eine herzliche Willkommensnachricht für einen neuen Benutzer namens {user.name}. Integriere einen netten Wortspruch mit dem Namen des Benutzers."
+        try:
+            response = openai.ChatCompletion.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": context},
+                    {"role": "user", "content": f"Erstelle eine Willkommensnachricht für {user.name} mit einem Wortspiel im idealfall. Bitte erwähne ebenfalls den Servername fett geschrieben."}
+                ],
+                max_tokens=80
+            )
+            message = response.choices[0].message['content'].strip()
+            return message
+        except Exception as e:
+            self.logger.error(f"Fehler bei der Anfrage an OpenAI: {e}")
+            return f"Willkommen {user.name}! Schön, dass du da bist!"          
+
+    @commands.Cog.listener()
+    async def on_member_update(self, before: disnake.Member, after: disnake.Member):       
         if before.pending and not after.pending:            
             try:
                 frischling_id = 854698446996766731
@@ -26,7 +58,6 @@ class Join(commands.Cog):
                 hobbies_id = 1065696208103952465
                 games_id = 1065696207416082435
                 other_id = 1065701427361611857
-                verify_id = 1066793314482913391
 
                 guild = after.guild
 
@@ -35,13 +66,12 @@ class Join(commands.Cog):
                 hobbies = disnake.utils.get(guild.roles, id=hobbies_id)
                 games = disnake.utils.get(guild.roles, id=games_id)
                 other = disnake.utils.get(guild.roles, id=other_id)
-                verify = disnake.utils.get(guild.roles, id=verify_id)
 
                 await after.add_roles(frischling, info, hobbies, games, other, verify)
                 embed = disnake.Embed(title=f"Herzlich Willkommen!", color=0x6495ED)
                 embed.set_author(name="Aincrad", icon_url=guild.icon.url)
                 embed.description = (
-                    f"Ein wildes {before.mention} ist aufgetaucht, willkommen bei uns auf **Aincrad!**\n"
+                    f"{await self.generate_welcome_message(before)}\n"
                     f"In <#1039167130190491709> kannst du dir deine eigenen Rollen vergeben.\n"
                     f"In <#1039167960012554260> kannst du dich nach Möglichkeit vorstellen damit die anderen wissen wer du bist."
                 )
@@ -66,22 +96,12 @@ class Join(commands.Cog):
                 mod_embed.add_field(name="Benutzer ID", value=before.id, inline=True)
                 mod_embed.add_field(name="Erwähnung", value=before.mention, inline=True)
 
-                class CopyMentionButton(disnake.ui.Button):                
-                    def __init__(self, mention):
-                        super().__init__(label="Erwähnung kopieren", style=disnake.ButtonStyle.primary)
-                        self.mention = mention
-                        self.callback = self.on_click
-
-                    async def on_click(self, interaction: disnake.Interaction):
-                        pyperclip.copy(self.mention)
-                        await interaction.response.send_message(f"`{self.mention}` wurde in die Zwischenablage kopiert!", ephemeral=True)
-
                 view = disnake.ui.View(timeout=None)  # Setze die Lebensdauer der View auf unbegrenzt
-                view.add_item(CopyMentionButton(before.mention))
+                view.add_item(CopyMentionButton())
 
                 mod_channel = guild.get_channel(854698447113027594)  # Ersetze durch die ID des Moderatoren-Kanals
                 guild.fetch_members()
-                await channel.send(embed=embed)                      
+                await channel.send(f"||{after.mention}||", embed=embed)
                 await mod_channel.send(embed=mod_embed, view=view)
 
                 embed = disnake.Embed(
@@ -122,7 +142,19 @@ class Join(commands.Cog):
                 await after.send(embed=embed)
                 # Führe hier weitere Aktionen aus, z.B. Rolle hinzufügen oder Datenbank aktualisieren  
             except Exception as e:
-                self.logger.critical(f"Fehler beim Hinzufügen der Rollen: {e}")          
+                self.logger.critical(f"Fehler beim Hinzufügen der Rollen: {e}")                   
+                
+class CopyMentionButton(disnake.ui.Button):                
+    def __init__(self):
+        super().__init__(label="Erwähnung kopieren", style=disnake.ButtonStyle.primary, custom_id="copy_mention_button")
+        self.callback = self.on_click
+
+    async def on_click(self, interaction: disnake.Interaction):
+        embed = interaction.message.embeds[0]
+        user_id = embed.fields[1].value  # Annahme: Die User ID ist das zweite Feld im Embed
+        mention = f"<@{user_id}>"
+        pyperclip.copy(mention)
+        await interaction.response.send_message(f"`{mention}` wurde in die Zwischenablage kopiert!", ephemeral=True)                         
 
 def setupJoin(bot):
     bot.add_cog(Join(bot))

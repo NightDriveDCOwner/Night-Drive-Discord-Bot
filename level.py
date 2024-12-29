@@ -4,7 +4,7 @@ import sqlite3
 import logging
 import datetime
 import asyncio
-from DBConnection import DatabaseConnection
+from dbconnection import DatabaseConnection
 from globalfile import Globalfile
 
 class Level(commands.Cog):

@@ -8,7 +8,7 @@ from disnake.ext import commands
 from datetime import datetime, timedelta, timedelta, timezone
 from moderation import Moderation
 import logging
-from DBConnection import DatabaseConnection
+from dbconnection import DatabaseConnection
 import os
 
 class Reaction(commands.Cog):

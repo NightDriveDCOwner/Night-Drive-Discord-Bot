@@ -2,21 +2,21 @@ import disnake, logging
 from functools import wraps
 import os
 
-class RoleHierarchy:
+class rolehierarchy:
         def __init__(self):
             # Definieren Sie die Hierarchie der Rollen in der Reihenfolge von niedrigster zu höchster Hierarchie
             self.role_hierarchy = [
                 "Test-Supporter",
                 "Supporter",
-                "Sr. Supporter",
+                "Senior Supporter",
                 "Moderator",
-                "Sr. Moderator",
+                "Senior Moderator",
                 "Administrator",
                 "Leitung",
                 "Co. Owner",
                 "Owner"
             ]
-            self.logger = logging.getLogger("RoleHierarchy")
+            self.logger = logging.getLogger("rolehierarchy")
             logging_level = os.getenv("LOGGING_LEVEL", "INFO").upper() 
             self.logger.setLevel(logging_level)
                         
@@ -47,7 +47,7 @@ class RoleHierarchy:
             :param member: Das Mitglied, dessen Rollen überprüft werden sollen.
             :param role_name: Der Name der Rolle, die überprüft werden soll.
             """
-            role_hierarchy = RoleHierarchy()
+            role_hierarchy = rolehierarchy()
             if role_hierarchy.has_role_or_higher(member, role_name):
                 await inter.response.send_message(f"{member.mention} hat die Rolle {role_name} oder eine höhere.")
             else:
@@ -57,7 +57,7 @@ class RoleHierarchy:
             def decorator(func):
                 @wraps(func)
                 async def wrapper(self, inter: disnake.ApplicationCommandInteraction, *args, **kwargs):
-                    role_hierarchy = RoleHierarchy()
+                    role_hierarchy = rolehierarchy()
                     if not role_hierarchy.has_role_or_higher(inter.author, role_name):
                         await inter.response.send_message("Du hast nicht die erforderlichen Berechtigungen, um diesen Befehl auszuführen.", ephemeral=True)
                         return

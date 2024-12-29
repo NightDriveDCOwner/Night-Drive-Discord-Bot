@@ -2,7 +2,7 @@ import disnake, time, os, dotenv
 from disnake.ext import commands
 from globalfile import Globalfile
 import logging
-from DBConnection import DatabaseConnection
+from dbconnection import DatabaseConnection
 import sqlite3
 
 

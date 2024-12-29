@@ -7,7 +7,7 @@ import asyncio
 import pytz
 import re
 from typing import Union
-from DBConnection import DatabaseConnection
+from dbconnection import DatabaseConnection
 
 
 class Globalfile(commands.Cog):
@@ -152,7 +152,7 @@ class Globalfile(commands.Cog):
     async def admin_did_something(self, action: disnake.AuditLogAction, handleduser: Union[disnake.User, disnake.Member]):
         DeletedbyAdmin = False
         guild = self.bot.get_guild(854698446996766730)
-        async for entry in guild.audit_logs(limit=5, action=action, after=self.get_current_time() - timedelta(minutes=5)):                                            
+        async for entry in guild.audit_logs(limit=5, action=action, after=datetime.now() - timedelta(minutes=5)):                                            
             if action == disnake.AuditLogAction.message_delete or action == disnake.AuditLogAction.member_disconnect:
                 if entry.extra.count is not None:
                     if self.TimerMustReseted:
@@ -193,6 +193,12 @@ class Globalfile(commands.Cog):
                 username = handleduser.name
                 userid = handleduser.id     
         return self.UserRecord(user,username,userid)  
+
+    async def log_audit_entry(self, logtype: str, userid: int, details: str):
+        """Loggt einen Audit-Eintrag in die Datenbank."""
+        cursor = self.db.connection.cursor()
+        cursor.execute("INSERT INTO AUDITLOG (LOGTYPE, USERID, DETAILS) VALUES (?, ?, ?)", (logtype, userid, details))
+        self.db.connection.commit()
     
     async def delete_message_by_id(self, channel_id: int, message_id: int):
         """Löscht eine Nachricht basierend auf ihrer ID in einem bestimmten Kanal."""
