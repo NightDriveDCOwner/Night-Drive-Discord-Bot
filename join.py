@@ -25,7 +25,10 @@ class Join(commands.Cog):
 
     @commands.Cog.listener()
     async def on_ready(self):
-        self.bot.add_view(self.create_copy_mention_view())       
+        self.bot.add_view(self.create_copy_mention_view()) 
+        self.bot.description=="Hier sind die [Nutzungsbedingungen vom Cardinal System](https://cdn.discordapp.com/attachments/1061441308452999261/1323286193705713736/Nutzungsbedingungen_fur_Cardinal_System.pdf?ex=6773f5ce&is=6772a44e&hm=b0f62fca99ea05c399e380b5ee0c4c5045bbd36479535e2502b5bbba4c05f725)"
+        await self.bot.change_presence(activity=disnake.Activity(type=disnake.ActivityType.watching, name="über die Spieler"))      
+        self.bot.reload
 
     def create_copy_mention_view(self):
         view = disnake.ui.View(timeout=None)  # Setze die Lebensdauer der View auf unbegrenzt

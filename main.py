@@ -44,7 +44,9 @@ logger = logging.getLogger(__name__)
 formatter = logging.Formatter('[%(asctime)s - %(name)s - %(levelname)s]: %(message)s')
 
 intents = disnake.Intents.all()
-bot = commands.Bot(intents=intents, command_prefix=None)
+bot = commands.Bot(intents=intents, command_prefix=None, description= "Hier sind die [Nutzungsbedingungen vom Cardinal System](https://cdn.discordapp.com/attachments/1061441308452999261/1323286193705713736/Nutzungsbedingungen_fur_Cardinal_System.pdf?ex=6773f5ce&is=6772a44e&hm=b0f62fca99ea05c399e380b5ee0c4c5045bbd36479535e2502b5bbba4c05f725)")
+bot.description = "Hier sind die [Nutzungsbedingungen vom Cardinal System](https://cdn.discordapp.com/attachments/1061441308452999261/1323286193705713736/Nutzungsbedingungen_fur_Cardinal_System.pdf?ex=6773f5ce&is=6772a44e&hm=b0f62fca99ea05c399e380b5ee0c4c5045bbd36479535e2502b5bbba4c05f725)"
+bot.application_info = "Hier sind die [Nutzungsbedingungen vom Cardinal System](https://cdn.discordapp.com/attachments/1061441308452999261/1323286193705713736/Nutzungsbedingungen_fur_Cardinal_System.pdf?ex=6773f5ce&is=6772a44e&hm=b0f62fca99ea05c399e380b5ee0c4c5045bbd36479535e2502b5bbba4c05f725)"
 
 discord_handler = DiscordLoggingHandler(bot, user_id=461969832074543105)
 logger.addHandler(discord_handler)

@@ -156,7 +156,7 @@ class Ticket(commands.Cog):
         
         if ticket_type.lower() == "verify ticket":
             content = ("bitte schicke uns ein Bild von dir mit einem Zettel, auf dem dein Discord-Tag und das aktuelle Datum geschrieben sind. "
-                       "Außerdem benötigen wir ein Bild von deinem Personalausweis oder Reisepass, auf dem dein Geburtsdatum und Vorname sichtbar sind.")
+                       "Anschließend erhälst du die <@1066793314482913391> Rolle, als Bestätigung deiner Identität.")
         else:
             content = ("bitte beschreibe dein Anliegen so detailliert wie möglich, damit wir dir schnell und "
                        "effektiv helfen können.")
@@ -269,7 +269,7 @@ class Ticket(commands.Cog):
                 "Erstelle ein Verify-Ticket, um dich zu verifizieren. "
                 "Im Zuge des Tickets wirst du aufgefordert, persönliche Informationen anzugeben, um deine Identität zu bestätigen. "
                 "Du wirst gebeten, ein Bild von dir mit einem Zettel zu senden, auf dem dein Discord-Tag und das aktuelle "
-                "Datum geschrieben sind sowie sowie ein geschwärztes Bild (außer Geburtsdatum und Vorname) von deinem Personalausweis oder Reisepass. "
+                "Datum geschrieben sind. "
                 "Im Zuge des Tickets beantworten wir dir Fragen zu der Notwendigkeit der Verifizierung und der Erhebung dieser Informationen. "
             ),
             color=0x0080FF

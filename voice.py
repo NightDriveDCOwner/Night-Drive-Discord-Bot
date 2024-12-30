@@ -21,36 +21,44 @@ class VoiceLogging(commands.Cog):
             self.logger.addHandler(handler)
  
         self.channel_limits = {
-            "🌕│Taverne I": 12,
-            "🌖│Taverne II": 6,
-            "🌗│Taverne III": 4,
-            "🌘│Taverne IV": 3,
-            "🌑│Taverne V": 2
+            "✨│Taverne I": 12,
+            "✨│Taverne II": 6,
+            "✨│Taverne III": 4,
+            "✨│Taverne IV": 3,
+            "✨│Taverne V": 2
         }
         self.alternative_channels = {}
 
-    def get_next_roman_numeral(self, name: str):
+    def get_next_roman_numeral(self):
         roman_numerals = ["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X", "XI", "XII", "XIII", "XIV", "XV", "XVI", "XVII", "XVIII", "XIX", "XX"]
-        for numeral in roman_numerals:
-            if numeral not in name:
-                return numeral
+        highest_numeral = "I"
+        
+        for channel_name in self.channel_limits.keys():
+            for numeral in roman_numerals:
+                if numeral in channel_name:
+                    highest_numeral = numeral if roman_numerals.index(numeral) > roman_numerals.index(highest_numeral) else highest_numeral
+
+        next_index = roman_numerals.index(highest_numeral) + 1
+        if next_index < len(roman_numerals):
+            return roman_numerals[next_index]
         return "I"  # Fallback if all numerals are used
 
     def replace_roman_numeral(self, name: str, new_numeral: str):
-        roman_numerals = ["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X", "XI", "XII", "XIII", "XIV", "XV", "XVI", "XVII", "XVIII", "XIX", "XX"]
+        roman_numerals = ["XX", "XIX", "XVIII", "XVII", "XVI", "XV", "XIV", "XIII", "XII", "XI", "X", "IX", "VIII", "VII", "VI", "V", "IV", "III", "II", "I"]
         for numeral in roman_numerals:
-            if numeral in name:
-                return name.replace(numeral, new_numeral)
+            if name.endswith(f" {numeral}"):
+                return name.replace(f" {numeral}", f" {new_numeral}")
         return f"{name} {new_numeral}"
 
     async def create_alternative_channel(self, guild: disnake.Guild, base_channel: disnake.VoiceChannel, limit):
         category = base_channel.category
-        next_numeral = self.get_next_roman_numeral(base_channel.name)
+        next_numeral = self.get_next_roman_numeral()
         new_channel_name = self.replace_roman_numeral(base_channel.name, next_numeral)
         new_channel = await guild.create_voice_channel(new_channel_name, category=category, user_limit=limit)
         await new_channel.edit(position=guild.get_channel(1066712410376904774).position)
         self.logger.info(f"Created new channel: {new_channel_name} with limit {limit}")
         self.alternative_channels[base_channel.id] = new_channel.id
+        self.channel_limits[new_channel_name] = limit  # Add new channel to channel_limits
         return new_channel
 
     async def delete_alternative_channel(self, guild: disnake.Guild, base_channel: disnake.VoiceChannel):
@@ -61,6 +69,7 @@ class VoiceLogging(commands.Cog):
                 await alt_channel.delete()
                 self.logger.info(f"Deleted channel: {alt_channel.name}")
                 del self.alternative_channels[base_channel.id]
+                del self.channel_limits[alt_channel.name]  # Remove channel from channel_limits
 
 
     @commands.Cog.listener()
@@ -99,10 +108,7 @@ class VoiceLogging(commands.Cog):
             else:
                 self.logger.info(f"{member.name} wurde von {User.username}({User.userid}) aus dem Channel {before.channel.name} gekickt.")
                 channel = guild.get_channel(1221018527289577582)
-                embed = create_embed(f"{member.name} was kicked from {User.username}({User.userid}) out of Channel {before.channel.name}.", 0xFF0000)
-                
-        if before.channel.name in self.channel_limits and len(before.channel.members) == 0:
-                        await self.delete_alternative_channel(guild, before.channel)                
+                embed = create_embed(f"{member.name} was kicked from {User.username}({User.userid}) out of Channel {before.channel.name}.", 0xFF0000)                   
 
         elif before.deaf != after.deaf or before.mute != after.mute or before.self_mute != after.self_mute:
             if after.deaf:
@@ -138,7 +144,11 @@ class VoiceLogging(commands.Cog):
             embed = create_embed(f"User leaved voice channel <#{before.channel.id}> and entered voice channel <#{after.channel.id}>!", 0x4169E1)
 
         if embed is not None:
-            await channel.send(embed=embed)                                               
+            await channel.send(embed=embed)  
+        
+        # Check if the before channel is empty and is an alternative channel
+        if before.channel is not None and before.channel.id in self.alternative_channels and len(before.channel.members) == 0:
+            await self.delete_alternative_channel(guild, before.channel)                            
 
 def setupVoice(bot):
     bot.add_cog(VoiceLogging(bot))

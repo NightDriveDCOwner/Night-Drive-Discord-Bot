@@ -1,7 +1,7 @@
 import disnake, os, logging
 import disnake.audit_logs
 from disnake.ext import commands, tasks
-from datetime import datetime, timedelta, timedelta, timezone
+from datetime import datetime, timedelta, timedelta, timezone, time
 from collections import namedtuple
 import asyncio
 import pytz
@@ -39,7 +39,9 @@ class Globalfile(commands.Cog):
         if not self.unban_task.is_running():
             self.unban_task.start()
         if not self.check_warn_levels.is_running():
-            self.check_warn_levels.start()          
+            self.check_warn_levels.start()        
+        if not self.check_birthdays.is_running():
+            self.check_birthdays.start()              
 
     def convert_duration_to_seconds(self, duration: str) -> int:
         """Konvertiere eine Zeitangabe in Sekunden."""
@@ -349,6 +351,59 @@ class Globalfile(commands.Cog):
         """Gibt die aktuelle Zeit in der deutschen Zeitzone zurück."""
         german_timezone = pytz.timezone('Europe/Berlin')
         return datetime.now(german_timezone)
+        
+    @tasks.loop(time=time(hour=12, minute=0, second=0, tzinfo=pytz.timezone('Europe/Berlin')))
+    async def check_birthdays(self):
+        """Überprüft täglich um 12 Uhr, ob ein Benutzer Geburtstag hat."""
+        cursor = self.db.connection.cursor()
+        today = self.get_current_time().date()
+
+        cursor.execute("SELECT DISCORDID, USERNAME FROM USER WHERE strftime('%m-%d', BIRTHDAY) = ?", (today.strftime('%m-%d'),))
+        birthday_users = cursor.fetchall()
+
+        if birthday_users:
+            guild = self.bot.get_guild(854698446996766730)  # Ersetzen Sie dies durch die tatsächliche ID Ihres Servers
+            if guild:
+                for user in birthday_users:
+                    discord_id, username = user
+                    member = guild.get_member(int(discord_id))
+                    if member:
+                        # Server Embed
+                        server_embed = disnake.Embed(
+                            title="🎉 Herzlichen Glückwunsch zum Geburtstag!",
+                            description=f"{member.mention} hat heute Geburtstag! 🎂",
+                            color=disnake.Color.green()
+                        )
+                        server_embed.set_thumbnail(url=member.avatar.url if member.avatar else member.default_avatar.url)
+                        server_embed.set_author(name=guild.name, icon_url=guild.icon.url if guild.icon else None)
+                        server_embed.add_field(name="🎁 Geschenk", value="Du erhältst heute doppelte EP!", inline=False)
+                        server_embed.set_footer(text="Wir wünschen dir einen tollen Tag!")
+
+                        # Sende die Nachricht im Server
+                        birthday_channel = guild.system_channel  # Ersetzen Sie dies durch den gewünschten Kanal
+                        if birthday_channel:
+                            await birthday_channel.send(embed=server_embed)
+
+                        # DM Embed
+                        dm_embed = disnake.Embed(
+                            title="🎉 Alles Gute zum Geburtstag!",
+                            description=f"Lieber {username},",
+                            color=disnake.Color.blue()
+                        )
+                        dm_embed.set_thumbnail(url=member.avatar.url if member.avatar else member.default_avatar.url)
+                        dm_embed.set_author(name=guild.name, icon_url=guild.icon.url if guild.icon else None)
+                        dm_embed.add_field(name="🎁 Geschenk", value="Du erhältst heute doppelte EP!", inline=False)
+                        dm_embed.add_field(name="🎉 Dankeschön", value="Vielen Dank, dass du Teil unserer Community bist!", inline=False)
+                        dm_embed.add_field(name="📞 Unterstützung", value="Wenn du irgendwelche Probleme hast, kannst du dich jederzeit an uns wenden.", inline=False)
+                        dm_embed.set_footer(text="Wir wünschen dir einen tollen Tag!")
+
+                        # Sende die private Nachricht
+                        try:
+                            await member.send(embed=dm_embed)
+                        except disnake.Forbidden:
+                            self.logger.warning(f"Konnte keine Nachricht an {username} ({discord_id}) senden. Möglicherweise hat der Benutzer DMs deaktiviert.")
+                    else:
+                        self.logger.warning(f"Benutzer {username} ({discord_id}) ist nicht auf dem Server.")
     
 def setupGlobal(bot):
     bot.add_cog(Globalfile(bot))

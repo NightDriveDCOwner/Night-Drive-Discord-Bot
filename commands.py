@@ -6,7 +6,7 @@ import time
 import re
 from globalfile import Globalfile
 from rolehierarchy import rolehierarchy
-from datetime import datetime, timedelta, timedelta
+from datetime import datetime, timedelta, timedelta, date
 import pytz
 from dotenv import load_dotenv
 import logging
@@ -16,6 +16,8 @@ import asyncio
 import platform
 import psutil
 import time
+import os
+from dotenv import load_dotenv, set_key
 
 
 
@@ -985,7 +987,10 @@ class MyCommands(commands.Cog):
             {"name": "unban_all_users", "description": "Entbannt alle gebannten Benutzer in der Gilde.", "rank": "Administrator"},
             {"name": "delete_old_messages", "description": "Löscht alle Nachrichten, die älter als sieben Tage sind, aus der Datenbank.", "rank": "Leitung"},
             {"name": "sync_users", "description": "Synchronisiere alle Benutzer des Servers mit der Users Tabelle.", "rank": "Moderator"},
-            {"name": "disconnect", "description": "Schließt alle Verbindungen des Bots und beendet den Bot-Prozess.", "rank": "Administrator"}
+            {"name": "disconnect", "description": "Schließt alle Verbindungen des Bots und beendet den Bot-Prozess.", "rank": "Administrator"},
+            {"name": "verify_user", "description": "Verifiziert einen Benutzer, speichert ein Bild und gibt ihm die Rolle 'Verified'.", "rank": "Supporter"},
+            {"name": "add_verify_image", "description": "Fügt ein weiteres Bild zu einem Benutzer hinzu.", "rank": "Supporter"},
+            {"name": "set_ai_open", "description": "Setzt den Wert von AI_OPEN in der .env Datei auf true oder false.", "rank": "Administrator"}
         ]
 
         await self.paginate_commands(inter, commands_list, "Moderationsbefehle")
@@ -1113,7 +1118,56 @@ class MyCommands(commands.Cog):
         cursor.execute("UPDATE USER SET imagepath = ? WHERE ID = ?", (updated_imagepath, userrecord['ID']))
         self.db.connection.commit()
 
-        await inter.edit_original_response(content=f"Ein weiteres Bild wurde für {user.mention} hinzugefügt.")                        
+        await inter.edit_original_response(content=f"Ein weiteres Bild wurde für {user.mention} hinzugefügt.")     
+        
+    @commands.slash_command(guild_ids=[854698446996766730])
+    @rolehierarchy.check_permissions("Administrator")
+    async def set_ai_open(self, inter: disnake.ApplicationCommandInteraction, value: bool):
+        """Setzt den Wert von AI_OPEN in der .env Datei auf true oder false."""
+        await inter.response.defer()
 
+        env_path = "envs/settings.env"
+        load_dotenv(dotenv_path=env_path)
+
+        # Setze den Wert von AI_OPEN
+        set_key(env_path, "AI_OPEN", str(value).upper())
+
+        await inter.edit_original_response(content=f"AI_OPEN wurde auf {value} gesetzt.")   
+        
+    @commands.slash_command(guild_ids=[854698446996766730])
+    async def set_birthday(self, inter: disnake.ApplicationCommandInteraction, birthday: str):
+        """Setzt den Geburtstag eines Benutzers im Format YYYY-MM-DD."""
+        await inter.response.defer()
+
+        try:
+            # Parse the birthday string to a date object
+            birthday_date = datetime.strptime(birthday, "%Y-%m-%d").date()
+        except ValueError:
+            await inter.edit_original_response(content="Ungültiges Datum. Bitte verwende das Format YYYY-MM-DD.")
+            return
+
+        # Update the user's birthday in the database
+        userrecord = self.globalfile.get_user_record(discordid=inter.user.id)
+        cursor = self.db.connection.cursor()
+        cursor.execute("UPDATE USER SET BIRTHDAY = ? WHERE ID = ?", (birthday_date, userrecord['ID']))
+        self.db.connection.commit()
+
+        # Calculate the days until the next birthday
+        today = date.today()
+        next_birthday = birthday_date.replace(year=today.year)
+        if next_birthday < today:
+            next_birthday = next_birthday.replace(year=today.year + 1)
+        days_until_birthday = (next_birthday - today).days
+
+        # Create an embed for the response
+        embed = disnake.Embed(
+            title="🎉 Geburtstag gesetzt!",
+            description=f"Der Geburtstag von {inter.user.mention} wurde auf **{birthday_date}** gesetzt.",
+            color=disnake.Color.blue()
+        )
+        embed.add_field(name="📅 Nächster Geburtstag", value=f"In **{days_until_birthday}** Tagen", inline=False)
+
+        await inter.edit_original_response(embed=embed)
+        
 def setupCommands(bot: commands.Bot):
     bot.add_cog(MyCommands(bot))

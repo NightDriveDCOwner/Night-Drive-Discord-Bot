@@ -124,9 +124,44 @@ class AuditLog(commands.Cog):
         embed.set_author(name=author_name, icon_url=thumbnail_url)
         embed.add_field(name="Responsible User", value=entry.user.mention, inline=True)
         embed.add_field(name="Action", value=action.name, inline=True)
-        embed.add_field(name="Changes", value=str(entry.changes), inline=False)
 
-        channel = entry.guild.get_channel(int(self.channel_id))        
+        changes_str = ""
+        key = zip(entry.changes.before.__dict__.keys())
+        before = entry.changes.before if entry.changes.before is not None else "N/A"
+        after = entry.changes.after if entry.changes.after is not None else "N/A"
+        if action == disnake.AuditLogAction.member_update:
+            changes_str += f"**{key}**:\nBefore: {before}\nAfter: {after}\n\n"
+        elif action == disnake.AuditLogAction.role_update:
+            changes_str += f"**Role {key}**:\nBefore: {before}\nAfter: {after}\n\n"
+        elif action == disnake.AuditLogAction.channel_create:
+            changes_str += f"**Channel Created**:\nName: {after}\n\n"
+        elif action == disnake.AuditLogAction.channel_update:
+            changes_str += f"**Channel {key}**:\nBefore: {before}\nAfter: {after}\n\n"
+        elif action == disnake.AuditLogAction.channel_delete:
+            changes_str += f"**Channel Deleted**:\nName: {before}\n\n"
+        elif action == disnake.AuditLogAction.guild_update:
+            changes_str += f"**Guild {key}**:\nBefore: {before}\nAfter: {after}\n\n"
+        elif action == disnake.AuditLogAction.message_delete:
+            changes_str += f"**Message Deleted**:\nContent: {before}\n\n"
+        elif action == disnake.AuditLogAction.message_bulk_delete:
+            changes_str += f"**Bulk Message Delete**:\nMessages Deleted: {before}\n\n"
+        elif action == disnake.AuditLogAction.emoji_create:
+            changes_str += f"**Emoji Created**:\nName: {after}\n\n"
+        elif action == disnake.AuditLogAction.emoji_update:
+            changes_str += f"**Emoji {key}**:\nBefore: {before}\nAfter: {after}\n\n"
+        elif action == disnake.AuditLogAction.emoji_delete:
+            changes_str += f"**Emoji Deleted**:\nName: {before}\n\n"
+        elif action == disnake.AuditLogAction.invite_create:
+            changes_str += f"**Invite Created**:\nCode: {after}\n\n"
+        elif action == disnake.AuditLogAction.invite_update:
+            changes_str += f"**Invite {key}**:\nBefore: {before}\nAfter: {after}\n\n"
+        elif action == disnake.AuditLogAction.invite_delete:
+            changes_str += f"**Invite Deleted**:\nCode: {before}\n\n"
+        else:
+            changes_str += f"**{key}**:\nBefore: {before}\nAfter: {after}\n\n"
+        embed.add_field(name="Changes", value=changes_str, inline=False)
+
+        channel = entry.guild.get_channel(int(self.channel_id))
         if channel:
             await channel.send(embed=embed)
         else:
