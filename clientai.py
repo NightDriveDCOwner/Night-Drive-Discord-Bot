@@ -24,8 +24,7 @@ class ClientAI(commands.Cog):
         openai.api_key = os.getenv("API_KEY")
         self.logger.debug(f"Loaded OpenAI API key.")
         self.file_contents = self.load_selected_py_files()
-        self.recent_interactions = []
-        self.discord_server_name = "Aincrad"  # Replace with your actual server name
+        self.recent_interactions = [] 
 
     def load_selected_py_files(self):
         file_contents = {}
@@ -64,7 +63,7 @@ class ClientAI(commands.Cog):
     async def ask_openai(self, question: str):
         sanitized_question = self.sanitize_input(question)
         recent_interactions = self.get_recent_interactions()
-        context = f"Dies ist ein Community-Discord-Server-Bot namens {self.bot.user.name} für den Server '{self.discord_server_name}'. Der Bot interagiert freundlich und kumpelhaft mit den Benutzern."
+        context = f"Dies ist ein Community-Discord-Server-Bot namens {self.bot.user.name} für den Server '{self.bot.user.name}'. Der Bot interagiert freundlich und kumpelhaft mit den Benutzern."
         try:
             response = openai.ChatCompletion.create(
                 model="gpt-3.5-turbo",
@@ -85,7 +84,7 @@ class ClientAI(commands.Cog):
 
     async def ask_openai_without_files(self, question: str):
         recent_interactions = self.get_recent_interactions()
-        context = f"Dies ist ein Community-Discord-Server-Bot namens {self.bot.user.name} für den Server '{self.discord_server_name}'. Der Bot interagiert freundlich und kumpelhaft mit den Benutzern. Bitte wirke so als hättest du eine Persönlichkeit damit du lebhafter zu meinen Benutzer von meinem Discord Server bist. Bitte sei aber nicht zu phantasievoll und bringe trotzdem eine gewisse Ersthaftigkeit mit. Wenn du nach Geschmeckern, Empfindungen oder ähnlichem gefragt wirst antworte bitte lustiger. Biete nicht immer direkt deine Hilfe an. Tue bitte so als wärst du das Cardinal System aus Sword Art Online."
+        context = f"Dies ist ein Community-Discord-Server-Bot namens {self.bot.user.name} für den Server '{self.bot.user.name}'. Der Bot interagiert freundlich und kumpelhaft mit den Benutzern. Bitte wirke so als hättest du eine Persönlichkeit damit du lebhafter zu meinen Benutzer von meinem Discord Server bist. Bitte sei aber nicht zu phantasievoll und bringe trotzdem eine gewisse Ersthaftigkeit mit. Wenn du nach Geschmeckern, Empfindungen oder ähnlichem gefragt wirst antworte bitte lustiger. Biete nicht immer direkt deine Hilfe an. Tue bitte so als wärst du das Cardinal System aus Sword Art Online."
         try:
             response = openai.ChatCompletion.create(
                 model="gpt-3.5-turbo",
@@ -172,8 +171,11 @@ class ClientAI(commands.Cog):
         await self.send_long_message(inter.followup, answer)
 
     @commands.Cog.listener()
-    async def on_message(self, message: disnake.Message):        
+    async def on_message(self, message: disnake.Message):
         if self.bot.user.mentioned_in(message) and not message.author.bot:
+            if "@everyone" in message.content:
+                self.logger.info("Nachricht mit @everyone ignoriert.")
+                return
             if message.channel.id != 1039179597763313814 and message.channel.id != 1233796714721317014:
                 load_dotenv(dotenv_path="envs/settings.env", override=True)  # Laden der Umgebungsvariablen mit Überschreiben
                 tmp = os.getenv("AI_OPEN")

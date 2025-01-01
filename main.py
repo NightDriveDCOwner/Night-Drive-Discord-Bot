@@ -41,12 +41,11 @@ load_dotenv(dotenv_path="envs/config.env")
 logging_level = os.getenv("LOGGING_LEVEL", "DEBUG").upper()
 logging.basicConfig(level=logging_level, filename="log.log", filemode="w", format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
+# logging.getLogger('disnake.http').setLevel(logging.DEBUG)
 formatter = logging.Formatter('[%(asctime)s - %(name)s - %(levelname)s]: %(message)s')
 
 intents = disnake.Intents.all()
-bot = commands.Bot(intents=intents, command_prefix=None, description= "Hier sind die [Nutzungsbedingungen vom Cardinal System](https://cdn.discordapp.com/attachments/1061441308452999261/1323286193705713736/Nutzungsbedingungen_fur_Cardinal_System.pdf?ex=6773f5ce&is=6772a44e&hm=b0f62fca99ea05c399e380b5ee0c4c5045bbd36479535e2502b5bbba4c05f725)")
-bot.description = "Hier sind die [Nutzungsbedingungen vom Cardinal System](https://cdn.discordapp.com/attachments/1061441308452999261/1323286193705713736/Nutzungsbedingungen_fur_Cardinal_System.pdf?ex=6773f5ce&is=6772a44e&hm=b0f62fca99ea05c399e380b5ee0c4c5045bbd36479535e2502b5bbba4c05f725)"
-bot.application_info = "Hier sind die [Nutzungsbedingungen vom Cardinal System](https://cdn.discordapp.com/attachments/1061441308452999261/1323286193705713736/Nutzungsbedingungen_fur_Cardinal_System.pdf?ex=6773f5ce&is=6772a44e&hm=b0f62fca99ea05c399e380b5ee0c4c5045bbd36479535e2502b5bbba4c05f725)"
+bot = commands.Bot(intents=intents, command_prefix=None)
 
 discord_handler = DiscordLoggingHandler(bot, user_id=461969832074543105)
 logger.addHandler(discord_handler)
@@ -55,18 +54,21 @@ logger.addHandler(discord_handler)
 async def on_ready():
     logger.info("The bot is ready!")  
    
-# bot.load_extension("commands")
-setupReaction(bot)
+
+
+setupModeration(bot)
+setupCommands(bot)
+setupTicket(bot)
 setupJoin(bot)
 setupVoice(bot)
 setupGlobal(bot)
-setupModeration(bot)
-setupTicket(bot)
+setupReaction(bot)
 setupLevel(bot)
 setupCountbot(bot)
 setupAuditLog(bot)
 setupClientAI(bot)
-setupCommands(bot)
+
+
 
 
 load_dotenv(dotenv_path="envs/token.env")

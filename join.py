@@ -11,10 +11,6 @@ class Join(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.logger = logging.getLogger("Join")
-        formatter = logging.Formatter('[%(asctime)s - %(name)s - %(levelname)s]: %(message)s')
-        handler = logging.StreamHandler()
-        handler.setFormatter(formatter)
-        self.logger.addHandler(handler)
         self.globalfile = Globalfile(bot)
         self.db = DatabaseConnection()
         if not self.logger.handlers:
@@ -70,9 +66,9 @@ class Join(commands.Cog):
                 games = disnake.utils.get(guild.roles, id=games_id)
                 other = disnake.utils.get(guild.roles, id=other_id)
 
-                await after.add_roles(frischling, info, hobbies, games, other, verify)
+                await after.add_roles(frischling, info, hobbies, games, other)
                 embed = disnake.Embed(title=f"Herzlich Willkommen!", color=0x6495ED)
-                embed.set_author(name="Aincrad", icon_url=guild.icon.url)
+                embed.set_author(name=self.bot.user.name, icon_url=guild.icon.url)
                 embed.description = (
                     f"{await self.generate_welcome_message(before)}\n"
                     f"In <#1039167130190491709> kannst du dir deine eigenen Rollen vergeben.\n"
@@ -112,7 +108,7 @@ class Join(commands.Cog):
                     description=f"Hallo {after.mention}, wir freuen uns, dich bei uns begrüßen zu dürfen!",
                     color=0x117A65 # Grün
                 )
-                embed.set_author(name="Aincrad", icon_url=after.guild.icon.url)
+                embed.set_author(name=self.bot.user.name, icon_url=after.guild.icon.url)
                 embed.set_thumbnail(url=after.avatar.url)
                 embed.add_field(
                     name="📜 Regeln",

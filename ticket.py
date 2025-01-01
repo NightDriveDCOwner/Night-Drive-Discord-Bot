@@ -139,6 +139,12 @@ class Ticket(commands.Cog):
 
         # Create the new channel
         ticket_channel = await guild.create_text_channel(name=channel_name, category=category, overwrites=overwrites)
+        if ticket_channel != None:
+            self.logger.info(f"Ticket channel {ticket_channel.name} created successfully.")
+        else:
+            self.logger.error(f"Failed to create ticket channel {channel_name}.")
+            await interaction.response.send_message("Fehler beim Erstellen des Ticketkanals. Bitte versuchen Sie es erneut.", ephemeral=True)
+            return
 
         # Insert the new entry into the database
         self.cursor.execute("INSERT INTO Ticket (ID, TICKETTYPE, USERID) VALUES (?, ?, ?)", (next_id, ticket_type, interaction.user.id))
@@ -182,6 +188,7 @@ class Ticket(commands.Cog):
         if assigned:
             assigned_user = await self.bot.fetch_user(assigned)
             await interaction.response.send_message(f"Dieses Ticket wurde bereits {assigned_user.mention} zugewiesen.", ephemeral=True)
+            self.logger.debug(f"Ticket {ticket_id} wurde bereits zugewiesen.")
             return
 
         # Aktualisiere das Ticket in der Datenbank
@@ -189,6 +196,7 @@ class Ticket(commands.Cog):
         self.db.connection.commit()
 
         await interaction.response.send_message(f"Dieses Ticket wurde dem Teammitglied {interaction.author.mention} zugewiesen.")
+        self.logger.info(f"Ticket {ticket_id} wurde erfolgreich dem Teammitglied {interaction.author.name} zugewiesen.")
 
     async def close_ticket(self, interaction: disnake.Interaction, ticket_id: int):
         # Setze das Ticket in der Datenbank auf "DONE"
@@ -203,6 +211,7 @@ class Ticket(commands.Cog):
         user_id = self.cursor.fetchone()[0]
         user = await self.bot.fetch_user(user_id)
         await user.send(f"Dein Ticket mit der ID {ticket_id} wurde geschlossen.")
+        self.logger.info(f"Ticket {ticket_id} wurde erfolgreich geschlossen.")
 
 # Define the button callbacks as separate methods
     async def bewerbung_button_callback(self, interaction: disnake.Interaction):
@@ -217,7 +226,6 @@ class Ticket(commands.Cog):
     async def verify_ticket_button_callback(self, interaction: disnake.Interaction):
         await self.create_ticket_channel(interaction, "Verify Ticket")        
 
-    # Modify the create_ticket_embeds method to use the new callbacks
     @commands.slash_command(guild_ids=[854698446996766730])
     async def create_ticket_embeds(self, inter: disnake.ApplicationCommandInteraction):
         await inter.response.defer(ephemeral=True)  # Defer the interaction
@@ -235,7 +243,7 @@ class Ticket(commands.Cog):
             ),
             color=0x0080FF
         )
-        bewerbung_embed.set_author(name="Aincrad", icon_url=guild.icon.url if guild.icon else None)
+        bewerbung_embed.set_author(name=self.bot.user.name, icon_url=guild.icon.url if guild.icon else None)
         bewerbung_view = self.create_bewerbung_view()
 
         # Ticket Embed
@@ -247,7 +255,7 @@ class Ticket(commands.Cog):
             ),
             color=0x0080FF
         )
-        ticket_embed.set_author(name="Aincrad", icon_url=guild.icon.url if guild.icon else None)
+        ticket_embed.set_author(name=self.bot.user.name, icon_url=guild.icon.url if guild.icon else None)
         ticket_view = self.create_ticket_view()
 
         # Admin Ticket Embed
@@ -260,7 +268,7 @@ class Ticket(commands.Cog):
             ),
             color=0x0080FF
         )
-        admin_ticket_embed.set_author(name="Aincrad", icon_url=guild.icon.url if guild.icon else None)
+        admin_ticket_embed.set_author(name=self.bot.user.name, icon_url=guild.icon.url if guild.icon else None)
         admin_ticket_view = self.create_admin_ticket_view()
         
         verify_ticket_embed = disnake.Embed(
@@ -274,15 +282,15 @@ class Ticket(commands.Cog):
             ),
             color=0x0080FF
         )        
-        verify_ticket_embed.set_author(name="Aincrad", icon_url=guild.icon.url if guild.icon else None)
+        verify_ticket_embed.set_author(name=self.bot.user.name, icon_url=guild.icon.url if guild.icon else None)
         verify_ticket_view = self.create_verify_ticket_view()
 
         await self.check_and_update_message(channel, bewerbung_embed, "Bewerbung", bewerbung_view)
         await self.check_and_update_message(channel, ticket_embed, "Ticket", ticket_view)
         await self.check_and_update_message(channel, admin_ticket_embed, "Admin Ticket", admin_ticket_view)
         await self.check_and_update_message(self.bot.get_channel(1323005558730657812), verify_ticket_embed, "Verify Ticket", verify_ticket_view)        
-
-        await inter.edit_original_response(content="Ticket Embeds wurden erstellt/aktualisiert.")
+        self.logger.info("Ticket Embeds have been created/updated.")
+        await inter.edit_original_response(content="Ticket Embeds wurden erstellt/aktualisiert.")    
 
 def setupTicket(bot):
     bot.add_cog(Ticket(bot))

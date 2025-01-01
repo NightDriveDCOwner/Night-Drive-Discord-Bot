@@ -22,3 +22,5 @@ __pycache__/reaction.cpython-312.pyc
 *.pyc
 config.env
 token.env
+*.pyc
+/__pycache__

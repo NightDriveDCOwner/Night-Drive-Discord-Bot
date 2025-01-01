@@ -209,15 +209,15 @@ class Globalfile(commands.Cog):
             if channel:
                 message = await channel.fetch_message(message_id)
                 await message.delete()
-                print(f"Nachricht mit der ID {message_id} wurde gelöscht.")
+                self.logger.info(f"Nachricht mit der ID {message_id} wurde gelöscht.")
             else:
-                print(f"Kanal mit der ID {channel_id} wurde nicht gefunden.")
+                self.logger.warning(f"Kanal mit der ID {channel_id} wurde nicht gefunden.")
         except disnake.NotFound:
-            print(f"Nachricht mit der ID {message_id} wurde nicht gefunden.")
+            self.logger.warning(f"Nachricht mit der ID {message_id} wurde nicht gefunden.")
         except disnake.Forbidden:
-            print("Ich habe nicht die Berechtigung, diese Nachricht zu löschen.")
+            self.logger.warning("Ich habe nicht die Berechtigung, diese Nachricht zu löschen.")
         except Exception as e:
-            print(f"Ein Fehler ist aufgetreten: {e}")
+            self.logger.error(f"Ein Fehler ist aufgetreten: {e}")
 
     async def delete_message_by_id_anywhere(self, message_id: int):
         """Versucht, eine Nachricht basierend auf ihrer ID in allen Kanälen zu finden und zu löschen."""
@@ -226,17 +226,17 @@ class Globalfile(commands.Cog):
                 try:
                     message = await channel.fetch_message(message_id)
                     await message.delete()
-                    print(f"Nachricht mit der ID {message_id} wurde gelöscht.")
+                    self.logger.info(f"Nachricht mit der ID {message_id} wurde gelöscht.")
                     return # Nachricht wurde gefunden und gelöscht, also abbrechen
                 except disnake.NotFound:
                     pass # Nachricht nicht in diesem Kanal gefunden, also weiter suchen
                 except disnake.Forbidden:
-                    print("Ich habe nicht die Berechtigung, diese Nachricht zu löschen.")
+                    self.logger.warning("Ich habe nicht die Berechtigung, diese Nachricht zu löschen.")
                     return # Berechtigung fehlt, also abbrechen
                 except Exception as e:
                     self.logger.critical(f"Ein Fehler ist aufgetreten: {e}")
                     return # Ein anderer Fehler ist aufgetreten, also abbrechen
-        print(f"Nachricht mit der ID {message_id} wurde nicht gefunden.")
+        self.logger.warning(f"Nachricht mit der ID {message_id} wurde nicht gefunden.")
 
     def get_user_record_id(self, username: str = None, user_id: int = None) -> int:
             """Holt die ID des Datensatzes aus der Tabelle User basierend auf Benutzername und/oder User ID."""
