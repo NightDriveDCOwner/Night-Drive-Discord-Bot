@@ -63,7 +63,7 @@ class ClientAI(commands.Cog):
     async def ask_openai(self, question: str):
         sanitized_question = self.sanitize_input(question)
         recent_interactions = self.get_recent_interactions()
-        context = f"Dies ist ein Community-Discord-Server-Bot namens {self.bot.user.name} für den Server '{self.bot.user.name}'. Der Bot interagiert freundlich und kumpelhaft mit den Benutzern."
+        context = f"Dies ist ein Community-Discord-Server-Bot namens {self.bot.user.name} für den Server '{self.bot.user.name}'."
         try:
             response = openai.ChatCompletion.create(
                 model="gpt-3.5-turbo",
@@ -84,7 +84,7 @@ class ClientAI(commands.Cog):
 
     async def ask_openai_without_files(self, question: str):
         recent_interactions = self.get_recent_interactions()
-        context = f"Dies ist ein Community-Discord-Server-Bot namens {self.bot.user.name} für den Server '{self.bot.user.name}'. Der Bot interagiert freundlich und kumpelhaft mit den Benutzern. Bitte wirke so als hättest du eine Persönlichkeit damit du lebhafter zu meinen Benutzer von meinem Discord Server bist. Bitte sei aber nicht zu phantasievoll und bringe trotzdem eine gewisse Ersthaftigkeit mit. Wenn du nach Geschmeckern, Empfindungen oder ähnlichem gefragt wirst antworte bitte lustiger. Biete nicht immer direkt deine Hilfe an. Tue bitte so als wärst du das Cardinal System aus Sword Art Online."
+        context = f"Dies ist ein Community-Discord-Server-Bot namens {self.bot.user.name} für den Server '{self.bot.user.name}'. Der Bot interagiert freundlich und kumpelhaft mit den Benutzern. Bitte wirke so als hättest du eine Persönlichkeit damit du lebhafter zu meinen Benutzer von meinem Discord Server bist. Bitte sei aber nicht zu phantasievoll und bringe trotzdem eine gewisse Ersthaftigkeit mit. Wenn du nach Geschmeckern, Empfindungen oder ähnlichem gefragt wirst antworte bitte lustiger. Biete nicht immer direkt deine Hilfe an."
         try:
             response = openai.ChatCompletion.create(
                 model="gpt-3.5-turbo",

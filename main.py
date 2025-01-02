@@ -11,6 +11,7 @@ from countbot import setupCountbot
 from auditlog import setupAuditLog
 from clientai import setupClientAI
 from commands import setupCommands
+from roleassignment import setupRoleAssignment
 import disnake
 import logging
 import asyncio
@@ -67,6 +68,7 @@ setupLevel(bot)
 setupCountbot(bot)
 setupAuditLog(bot)
 setupClientAI(bot)
+setupRoleAssignment(bot)
 
 
 

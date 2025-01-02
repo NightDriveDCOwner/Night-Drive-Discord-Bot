@@ -161,6 +161,95 @@ class Level(commands.Cog):
                 self.cursor.execute("UPDATE EXPERIENCE SET LEVEL = ? WHERE USERID = ?", (new_level, user_id))
                 self.db.connection.commit()
                 await self.send_level_up_message(user, new_level)
+                await self.assign_role(user, new_level)
+
+    async def assign_role(self, member: disnake.Member, level):
+        # Holen der USERID aus der USER-Tabelle anhand der member.id
+        user_record = self.globalfile.get_user_record(discordid=str(member.id))
+        if not user_record:
+            self.logger.warning(f"USERID für {member.name} ({member.id}) nicht gefunden.")
+            return
+        user_id = user_record['ID']
+
+        # Finde die neue Rolle basierend auf dem Level
+        new_role = None
+        while level > 0:
+            self.cursor.execute("SELECT ROLE_ID FROM LEVELXP WHERE LEVELNAME = ?", (level,))
+            result = self.cursor.fetchone()
+            if result and result[0]:
+                role_id = result[0]
+                new_role = member.guild.get_role(int(role_id))
+                if new_role:
+                    break
+            level -= 1
+
+        if new_role:
+            # Überprüfen, ob der Benutzer die neue Rolle bereits hat
+            if new_role in member.roles:
+                return
+
+            # Entferne alle bestehenden Level-Rollen
+            level_roles = []
+            for role in member.roles:
+                if "level" in role.name.lower():
+                    level_roles.append(role)
+                else:
+                    self.cursor.execute("SELECT 1 FROM LEVELXP WHERE ROLE_ID = ?", (role.id,))
+                    if self.cursor.fetchone():
+                        level_roles.append(role)
+            
+            for role in level_roles:
+                await member.remove_roles(role)
+                self.logger.info(f"Removed role {role.name} from {member.name}")
+
+            # Weisen Sie die neue Rolle zu
+            await member.add_roles(new_role)
+            self.logger.info(f"Assigned role {new_role.name} to {member.name} for reaching level {level}")
+        else:
+            self.logger.info(f"No role assigned to {member.name} as no valid role found for their level")
+        
+    @commands.slash_command(guild_ids=[854698446996766730])
+    @rolehierarchy.check_permissions("Administrator")
+    async def update_all_users_roles(self, inter: disnake.ApplicationCommandInteraction):
+        """Aktualisiert die Rollen aller Benutzer basierend auf ihrem Level in der EXPERIENCE Tabelle."""
+        await inter.response.defer()
+        for guild in self.bot.guilds:
+            for member in guild.members:
+                if member.bot:
+                    continue
+
+                # Holen der USERID aus der USER-Tabelle anhand der member.id
+                user_record = self.globalfile.get_user_record(discordid=str(member.id))
+                if not user_record:
+                    # Benutzer hat noch kein Level, setze auf Level 1
+                    self.cursor.execute("INSERT INTO USER (DISCORDID) VALUES (?)", (str(member.id),))
+                    self.db.connection.commit()
+                    user_id = self.cursor.lastrowid
+                    self.cursor.execute("INSERT INTO EXPERIENCE (USERID, LEVEL) VALUES (?, 1)", (user_id,))
+                    self.db.connection.commit()
+                    level = 1
+                else:
+                    user_id = user_record['ID']
+                    self.cursor.execute("SELECT LEVEL FROM EXPERIENCE WHERE USERID = ?", (user_id,))
+                    result = self.cursor.fetchone()
+                    if result:
+                        level = result[0]
+                    else:
+                        # Benutzer hat noch kein Level, setze auf Level 1
+                        self.cursor.execute("INSERT INTO EXPERIENCE (USERID, LEVEL) VALUES (?, 1)", (user_id,))
+                        self.db.connection.commit()
+                        level = 1
+
+                await self.assign_role(member, level)
+
+        await inter.edit_original_response(content="Rollen aller Benutzer wurden erfolgreich aktualisiert.")
+                
+    @commands.slash_command(guild_ids=[854698446996766730])
+    @rolehierarchy.check_permissions("Administrator")
+    async def test_assign_role(self, inter: disnake.ApplicationCommandInteraction, user: disnake.User, level: int):
+        """Testet die Rollenzuweisung für einen bestimmten Benutzer und Level."""
+        await self.assign_role(user, level)
+        await inter.response.send_message(f"Rolle für {user.mention} basierend auf Level {level} wurde getestet.", ephemeral=True)        
 
     async def send_level_up_message(self, user: disnake.User, new_level):
         channel = self.bot.get_channel(854698447247769633)  # Replace with your channel ID
@@ -169,7 +258,7 @@ class Level(commands.Cog):
             f"Du hast Level {new_level} erreicht! 🎉\n"
             f"Vielen Dank für deine Aktivität! 🥳"
         )
-        embed = disnake.Embed(title="Level Up!", description=description, color=disnake.Color.green())
+        embed = disnake.Embed(title=f"**{user.name} 🔼{new_level}**", description=description, color=disnake.Color.green())
         self.logger.info(f"Level Up Message sent for {user.name} (ID: {user.id}) (Test)")
         embed.set_thumbnail(url=user.avatar.url)
         await channel.send(content=f"{user.mention}", embed=embed)

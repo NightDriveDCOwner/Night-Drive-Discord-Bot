@@ -443,5 +443,57 @@ class Moderation(commands.Cog):
             self.logger.critical(f"An error occurred: {e}")
             await inter.edit_original_response(content=f"Ein Fehler ist aufgetreten: {e}")            
 
+    @commands.slash_command(guild_ids=[854698446996766730])
+    @rolehierarchy.check_permissions("Administrator")
+    async def kick_users_underage(self, inter: disnake.ApplicationCommandInteraction):
+        """Kicke alle Benutzer mit zwei bestimmten Rollen und sende ihnen eine Nachricht."""
+        await inter.response.defer()
+        guild = inter.guild
+
+        # Definiere die Rollen-IDs
+        role1_id = 1300559732905607269  # Ersetze dies durch die tatsächliche ID der ersten Rolle
+        role2_id = 987654321098765432  # Ersetze dies durch die tatsächliche ID der zweiten Rolle
+
+        role1 = guild.get_role(role1_id)
+        role2 = guild.get_role(role2_id)
+        members_to_kick1 = [member for member in guild.members if role1 in member.roles]
+        members_to_kick2 =[member for member in guild.members if role2 in member.roles]
+        embed = disnake.Embed(
+            title="Server-Umstellung auf 18+",
+            description=(
+                "Aufgrund der Umstellung des Servers auf einen Dating-Server für 18+ müssen wir uns leider von dir verabschieden. Vielen Dank, dass du Teil unseres Projektes warst."
+                "Ich, Tatzu, der Owner des Servers entschuldige mich für diese Schritt."
+                ),
+            color=disnake.Color.dark_blue()
+        )
+        embed.set_footer(text="Wir wünschen dir alles Gute!")
+        embed.set_author(name=inter.guild.name, icon_url=guild.icon.url)
+
+        for member in members_to_kick1:
+            try:
+                try:
+                    await member.send(embed=embed)
+                except Exception as e:
+                    self.logger.error(f"Fehler beim Senden der Nachricht an {member.name} (ID: {member.id}): {e}")
+                await member.kick(reason="Server-Umstellung auf 18+")
+                self.logger.info(f"User {member.name} (ID: {member.id}) wurde gekickt.")
+            except Exception as e:
+                self.logger.error(f"Fehler beim Kicken von {member.name} (ID: {member.id}): {e}")
+                
+        for member in members_to_kick2:
+            try:
+                try:
+                    await member.send(embed=embed)
+                except Exception as e:
+                    self.logger.error(f"Fehler beim Senden der Nachricht an {member.name} (ID: {member.id}): {e}")
+                await member.kick(reason="Server-Umstellung auf 18+")
+                self.logger.info(f"User {member.name} (ID: {member.id}) wurde gekickt.")
+            except Exception as e:
+                self.logger.error(f"Fehler beim Kicken von {member.name} (ID: {member.id}): {e}")                
+
+        await inter.edit_original_response(content=f"{len(members_to_kick1)+len(members_to_kick2)} Benutzer wurden gekickt.")
+        self.logger.info(f"{len(members_to_kick1)+len(members_to_kick2)} Benutzer wurden gekickt.")
+ 
+       
 def setupModeration(bot: commands.Bot):
     bot.add_cog(Moderation(bot))                

@@ -699,10 +699,13 @@ class MyCommands(commands.Cog):
         """Zeigt alle Benutzerbefehle an."""
         await inter.response.defer(ephemeral=True)
         commands_list = [
+            {"name": "/help_user", "description": "Zeigt alle Benutzerbefehle an.", "rank": "Level 1+"},
             {"name": "/user", "description": "Get your tag and ID.", "rank": "Level 1+"},
             {"name": "/add_user_to_ticket", "description": "Fügt einen Benutzer zu einem Ticket-Channel hinzu.", "rank": "Level 1+"},
             {"name": "/my_profile", "description": "Zeigt das eigene Profil an, einschließlich Notizen und Warnungen.", "rank": "Level 1+"},
-            {"name": "/info", "description": "Zeigt Informationen über den Bot an.", "rank": "Level 1+"}
+            {"name": "/info", "description": "Zeigt Informationen über den Bot an.", "rank": "Level 1+"},
+            {"name": "/top_users", "description": "Zeigt alle Moderationsbefehle an.", "rank": "Level 1+"},
+            
         ]
         self.logger.info(f"Command /help_user was executed by {inter.user.name} (ID: {inter.user.id}).")
         await self.paginate_commands(inter, commands_list, "Benutzerbefehle")
@@ -746,10 +749,10 @@ class MyCommands(commands.Cog):
         message = await inter.edit_original_response(embed=embed, view=view)
 
         def check(interaction: disnake.MessageInteraction):
-            return interaction.message.id == message.id and interaction.user.id == inter.user.id
+                return interaction.message.id == message.id and interaction.user.id == inter.user.id
 
         while True:
-            interaction = await self.bot.wait_for("interaction", check=check)
+            interaction = await self.bot.wait_for("message_interaction", check=check)
             if interaction.data["custom_id"].startswith("prev_"):
                 current_page -= 1
             elif interaction.data["custom_id"].startswith("next_"):
@@ -866,8 +869,8 @@ class MyCommands(commands.Cog):
         self.logger.info(f"User {inter.user.name} (ID: {inter.user.id}) has set their birthday to {birthday_date}.")
 
         await inter.edit_original_response(embed=embed)
-        
-    @commands.slash_command(guild_ids=[854698446996766730])        
+            
+    @commands.slash_command(guild_ids=[854698446996766730])
     async def my_profile(self, inter: disnake.ApplicationCommandInteraction):
         """Zeigt dein eigenes Profil an, einschließlich Notizen und Warnungen."""
         await inter.response.defer(ephemeral=True)
@@ -898,6 +901,23 @@ class MyCommands(commands.Cog):
         cursor.execute("SELECT SUM(VOICE) FROM VOICE_XP WHERE USERID = ?", (userrecord['ID'],))
         voice_minutes = cursor.fetchone()[0] or 0
 
+        # Hole die XP und das Level des Benutzers
+        cursor.execute("SELECT (MESSAGE + VOICE) AS TOTAL_XP, LEVEL FROM EXPERIENCE WHERE USERID = ?", (userrecord['ID'],))
+        xp_info = cursor.fetchone()
+        total_xp = xp_info[0]
+        current_level = xp_info[1]
+
+        # Berechne die XP für das nächste Level
+        cursor.execute("SELECT XP FROM LEVELXP WHERE LEVELNAME = ?", (current_level + 1,))
+        next_level_xp = cursor.fetchone()
+        if next_level_xp:
+            next_level_xp = int(next_level_xp[0])
+            xp_to_next_level = next_level_xp - total_xp
+            xp_percentage = (total_xp / next_level_xp) * 100
+        else:
+            xp_to_next_level = 0
+            xp_percentage = 100
+
         # Erstelle ein Embed
         embed = disnake.Embed(title=f"Profil von {inter.user.name}", color=disnake.Color.blue())
         embed.set_author(name=inter.user.name, icon_url=inter.user.avatar.url if inter.user.avatar else inter.user.default_avatar.url)
@@ -909,6 +929,13 @@ class MyCommands(commands.Cog):
         # Füge Nachrichtenzähler und Voice-Aktivität hinzu
         embed.add_field(name="📨 **Nachrichten**", value=f"{message_count} Nachrichten", inline=False)
         embed.add_field(name="🎙️ **Voice-Aktivität**", value=f"{voice_minutes} Minuten", inline=False)
+
+        # Füge XP und Level hinzu
+        embed.add_field(name="✨ **Level**", value=(
+                        f"Aktuelle Level: {current_level}\n"
+                        f"XP: {total_xp} XP\n"
+                        f"XP bis zum nächsten Level: {xp_to_next_level} XP ({xp_percentage:.2f}%)"
+                        ), inline=False)               
 
         # Füge Geburtsdatum hinzu, falls vorhanden
         if user_info[4]:  # Assuming the birthday is stored in the 5th column
@@ -945,7 +972,7 @@ class MyCommands(commands.Cog):
             embed.add_field(name="Warnungen", value="Keine Warnungen vorhanden.", inline=False)
 
         self.logger.info(f"User profile requested for {inter.user.name} (ID: {inter.user.id}) by themselves.")
-        await inter.edit_original_response(embed=embed)        
+        await inter.edit_original_response(embed=embed)     
     
     
         

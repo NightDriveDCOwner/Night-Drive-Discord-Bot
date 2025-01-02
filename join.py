@@ -13,6 +13,8 @@ class Join(commands.Cog):
         self.logger = logging.getLogger("Join")
         self.globalfile = Globalfile(bot)
         self.db = DatabaseConnection()
+        self.invites_before_join = {}
+        
         if not self.logger.handlers:
             formatter = logging.Formatter('[%(asctime)s - %(name)s - %(levelname)s]: %(message)s')
             handler = logging.StreamHandler()
@@ -21,24 +23,30 @@ class Join(commands.Cog):
 
     @commands.Cog.listener()
     async def on_ready(self):
+        self.invites_before_join = await self.get_guild_invites()
         self.bot.add_view(self.create_copy_mention_view()) 
-        self.bot.description=="Hier sind die [Nutzungsbedingungen vom Cardinal System](https://cdn.discordapp.com/attachments/1061441308452999261/1323286193705713736/Nutzungsbedingungen_fur_Cardinal_System.pdf?ex=6773f5ce&is=6772a44e&hm=b0f62fca99ea05c399e380b5ee0c4c5045bbd36479535e2502b5bbba4c05f725)"
         await self.bot.change_presence(activity=disnake.Activity(type=disnake.ActivityType.watching, name="über die Spieler"))      
         self.bot.reload
 
+    async def get_guild_invites(self):
+        invites = {}
+        for guild in self.bot.guilds:
+            invites[guild.id] = await guild.invites()
+        return invites
+    
     def create_copy_mention_view(self):
         view = disnake.ui.View(timeout=None)  # Setze die Lebensdauer der View auf unbegrenzt
         view.add_item(CopyMentionButton())
         return view
 
     async def generate_welcome_message(self, user: disnake.Member) -> str:
-        context = f"Dies ist ein Community-Discord-Server-Bot namens Cardinal System für den Server '{user.guild.name}'. Der Bot interagiert freundlich und kumpelhaft mit den Benutzern. Erstelle eine herzliche Willkommensnachricht für einen neuen Benutzer namens {user.name}. Integriere einen netten Wortspruch mit dem Namen des Benutzers."
+        context = f"Dies ist ein Community-Discord-Server-Bot namens Cupid für den Server '{user.guild.name}'. Der Bot interagiert freundlich und kumpelhaft mit den Benutzern."
         try:
             response = openai.ChatCompletion.create(
                 model="gpt-3.5-turbo",
                 messages=[
                     {"role": "system", "content": context},
-                    {"role": "user", "content": f"Erstelle eine Willkommensnachricht für {user.name} mit einem Wortspiel im idealfall. Bitte erwähne ebenfalls den Servername fett geschrieben."}
+                    {"role": "user", "content": f"Erstelle eine Willkommensnachricht für {user.name} mit einem Wortspiel der mit dem Benutzernamen zu tun hat. Bitte erwähne ebenfalls den Servername fett geschrieben."}
                 ],
                 max_tokens=80
             )
@@ -75,19 +83,7 @@ class Join(commands.Cog):
                     f"In <#1039167960012554260> kannst du dich nach Möglichkeit vorstellen damit die anderen wissen wer du bist."
                 )
                 embed.set_image(url="https://media1.tenor.com/m/7-CNilpY-l8AAAAd/link-start-sao.gif")
-                channel = guild.get_channel(854698447247769630)
-
-                # Füge den neuen Benutzer zur USER-Tabelle hinzu
-                cursor = self.db.connection.cursor()
-                cursor.execute("SELECT ID FROM USER WHERE DISCORDID = ?", (str(after.id),))
-                result = cursor.fetchone()
-
-                if not result:
-                    cursor.execute("INSERT INTO USER (DISCORDID, USERNAME) VALUES (?, ?)", (str(after.id), after.name))
-                    self.db.connection.commit()
-                    self.logger.info(f"Neuer Benutzer {after.name} (ID: {after.id}) zur USER-Tabelle hinzugefügt.")
-                else:
-                    self.logger.info(f"Benutzer {after.name} (ID: {after.id}) existiert bereits in der USER-Tabelle.")      
+                channel = guild.get_channel(854698447247769630)  
 
                 guild = before.guild
                 mod_embed = disnake.Embed(title="Neuer Benutzer Beigetreten", color=0xFF0000)
@@ -143,6 +139,46 @@ class Join(commands.Cog):
             except Exception as e:
                 self.logger.critical(f"Fehler beim Hinzufügen der Rollen: {e}")                   
                 
+    @commands.Cog.listener()
+    async def on_member_join(self, member: disnake.Member):
+        # Überprüfe, ob der Benutzer durch eine Einladung beigetreten ist
+        cursor = self.db.connection.cursor()
+        cursor.execute("SELECT ID FROM USER WHERE DISCORDID = ?", (str(member.id),))
+        result = cursor.fetchone()
+
+        if not result:
+            cursor.execute("INSERT INTO USER (DISCORDID, USERNAME) VALUES (?, ?)", (str(member.id), member.name))
+            self.db.connection.commit()
+            self.logger.info(f"Neuer Benutzer {member.name} (ID: {member.id}) zur USER-Tabelle hinzugefügt.")
+        else:
+            self.logger.info(f"Benutzer {member.name} (ID: {member.id}) existiert bereits in der USER-Tabelle.")          
+        
+        invites_after_join = await member.guild.invites()
+        for invite in invites_after_join:
+            if invite.uses > self.invites_before_join[member.guild.id][invite.code].uses:
+                inviter_id = invite.inviter.id
+                current_date = self.globalfile.get_current_time().strftime('%Y-%m-%d')
+
+                cursor = self.db.connection.cursor()
+                cursor.execute("SELECT COUNT(*) FROM INVITE_XP WHERE USERID = ? AND DATE = ?", (inviter_id, current_date))
+                result = cursor.fetchone()
+
+                if result[0] == 0:
+                    cursor.execute("INSERT INTO INVITE_XP (USERID, DATE, COUNT) VALUES (?, ?, ?)", (inviter_id, current_date, 1))
+                else:
+                    cursor.execute("UPDATE INVITE_XP SET COUNT = COUNT + 1 WHERE USERID = ? AND DATE = ?", (inviter_id, current_date))
+
+                # Aktualisiere das INVITEID-Feld in der USER-Tabelle
+                cursor.execute("SELECT ID FROM INVITE_XP WHERE USERID = ? AND DATE = ?", (inviter_id, current_date))
+                invite_id = cursor.fetchone()[0]
+                cursor.execute("UPDATE USER SET INVITEID = ? WHERE DISCORDID = ?", (invite_id, str(member.id)))
+
+                self.db.connection.commit()
+                self.logger.info(f"Einladung von {invite.inviter.name} (ID: {inviter_id}) wurde angenommen. INVITE_XP aktualisiert und USER-Tabelle aktualisiert.")
+                break
+
+        self.invites_before_join[member.guild.id] = invites_after_join
+                
 class CopyMentionButton(disnake.ui.Button):                
     def __init__(self):
         super().__init__(label="Erwähnung kopieren", style=disnake.ButtonStyle.primary, custom_id="copy_mention_button")
@@ -154,6 +190,7 @@ class CopyMentionButton(disnake.ui.Button):
         mention = f"<@{user_id}>"
         pyperclip.copy(mention)
         await interaction.response.send_message(f"`{mention}` wurde in die Zwischenablage kopiert!", ephemeral=True)                         
+
 
 def setupJoin(bot):
     bot.add_cog(Join(bot))
