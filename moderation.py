@@ -5,6 +5,7 @@ import logging
 from dbconnection import DatabaseConnection
 from rolehierarchy import rolehierarchy
 import sqlite3
+from datetime import datetime, timedelta, timedelta, date, timezone
 
 
 class Moderation(commands.Cog):
@@ -12,16 +13,28 @@ class Moderation(commands.Cog):
         self.bot = bot
         self.message = disnake.message
         self.userid = int
-        self.logger = logging.getLogger("Moderation")
-        self.db = DatabaseConnection()        
+        self.logger = logging.getLogger("Moderation")     
         logging_level = os.getenv("LOGGING_LEVEL", "INFO").upper() 
         self.logger.setLevel(logging_level)
+        self.globalfile = Globalfile(bot)  
+        self.db: sqlite3.Connection = DatabaseConnection()
+        self.cursor: sqlite3.Cursor = self.db.connection.cursor()
                 
         if not self.logger.handlers:
             formatter = logging.Formatter('[%(asctime)s - %(name)s - %(levelname)s]: %(message)s')
             handler = logging.StreamHandler()
             handler.setFormatter(formatter)
             self.logger.addHandler(handler)
+        
+        self.cursor.execute("""
+            CREATE TABLE IF NOT EXISTS KICK (
+                ID INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+                USERID INTEGER,
+                REASON TEXT,
+                IMAGEPATH TEXT
+            )
+        """)
+        self.db.connection.commit()
                
 
     def add_user_to_badwords_times(user_id: int):
@@ -494,6 +507,47 @@ class Moderation(commands.Cog):
         await inter.edit_original_response(content=f"{len(members_to_kick1)+len(members_to_kick2)} Benutzer wurden gekickt.")
         self.logger.info(f"{len(members_to_kick1)+len(members_to_kick2)} Benutzer wurden gekickt.")
  
+    @commands.slash_command(guild_ids=[854698446996766730])
+    @rolehierarchy.check_permissions("Senior Supporter")
+    async def kick(self, 
+                inter: disnake.ApplicationCommandInteraction, 
+                member: disnake.Member = commands.Param(name="benutzer", description="Der Benutzer, der gekickt werden soll."), 
+                reason: str = commands.Param(name="begründung", description="Grund warum der Benutzer gekickt werden soll", default="Kein Grund angegeben"),
+                proof: disnake.Attachment = commands.Param(name="beweis", description="Ein Bild als Beweis für den Kick und zur Dokumentation", default=None)):
+        """Kicke einen Benutzer und speichere ein Bild als Beweis."""
+        await inter.response.defer()  # Verzögere die Interaktion
+        image_path = ""
+
+        try:
+            await member.kick(reason=reason)
+            kick_successful = True
+        except disnake.Forbidden:
+            kick_successful = False
+            await inter.edit_original_response(content=f"Ich habe keine Berechtigung, {member.mention} zu kicken.")
+        except disnake.HTTPException as e:
+            kick_successful = False
+            await inter.edit_original_response(content=f"Ein Fehler ist aufgetreten: {e}")
+
+        if kick_successful:
+            if proof:
+                image_path = await self.globalfile.save_image(proof, f"{member.id}_kick")
+
+            cursor = self.db.connection.cursor()
+            cursor.execute(
+                "INSERT INTO KICK (USERID, REASON, IMAGEPATH) VALUES (?, ?, ?)",
+                (member.id, reason, image_path)
+            )
+            self.db.connection.commit()
+
+            embed = disnake.Embed(title="Benutzer gekickt", description=f"{member.mention} wurde erfolgreich gekickt!", color=disnake.Color.red())
+            avatar_url = member.avatar.url if member.avatar else member.default_avatar.url
+            embed.set_author(name=member.name, icon_url=avatar_url)
+            embed.set_footer(text=f"User ID: {member.id}")
+            embed.add_field(name="Grund", value=reason, inline=False)
+            if proof:
+                embed.set_image(url=proof.url)  # Setze das Bild des Beweises, falls vorhanden
+
+            await inter.edit_original_response(embed=embed)
        
 def setupModeration(bot: commands.Bot):
     bot.add_cog(Moderation(bot))                

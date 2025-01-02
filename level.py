@@ -123,7 +123,7 @@ class Level(commands.Cog):
             image_path_fields = ""
             image_path_values = ""            
         query = f"INSERT INTO MESSAGE (CONTENT, USERID, CHANNELID, MESSAGEID, INSERT_DATE {image_path_fields}) VALUES (?, ?, ?, ?, ?{image_path_values})"
-        self.cursor.execute(query, (message.content, userrecord['ID'], message.channel.id, message.id, current_datetime, *image_paths))
+        self.cursor.execute(query, (message.content, userrecord["ID"], message.channel.id, message.id, current_datetime, *image_paths))
         self.db.connection.commit()
 
         current_time = self.globalfile.get_current_time()
