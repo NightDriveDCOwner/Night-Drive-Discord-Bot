@@ -50,13 +50,7 @@ bot = commands.Bot(intents=intents, command_prefix=None)
 
 discord_handler = DiscordLoggingHandler(bot, user_id=461969832074543105)
 logger.addHandler(discord_handler)
-
-@bot.event
-async def on_ready():
-    logger.info("The bot is ready!")  
    
-
-
 setupModeration(bot)
 setupCommands(bot)
 setupTicket(bot)
@@ -69,9 +63,6 @@ setupCountbot(bot)
 setupAuditLog(bot)
 setupClientAI(bot)
 setupRoleAssignment(bot)
-
-
-
 
 load_dotenv(dotenv_path="envs/token.env")
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")

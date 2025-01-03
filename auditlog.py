@@ -107,7 +107,10 @@ class AuditLog(commands.Cog):
     async def send_audit_log_embed(self, action: disnake.AuditLogAction, entry: disnake.AuditLogEntry):
         if isinstance(entry.target, disnake.User) or isinstance(entry.target, disnake.Member):
             author_name = entry.target.name
-            thumbnail_url = entry.user.avatar.url
+            try:
+                thumbnail_url = entry.user.avatar.url
+            except Exception as e:
+                self.logger.error(f"Error while fetching avatar URL: {e}")            
         elif isinstance(entry.target, disnake.Guild):
             author_name = entry.guild.name
             thumbnail_url = entry.guild.icon.url

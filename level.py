@@ -116,12 +116,23 @@ class Level(commands.Cog):
         userrecord = self.globalfile.get_user_record(discordid=message.author.id)
         current_datetime = self.globalfile.get_current_time().strftime('%Y-%m-%d %H:%M:%S')
         image_paths = [attachment.url for attachment in message.attachments]
-        if len(image_paths) != 0:
+        
+        if image_paths:
+            # Ensure IMAGEPATH columns exist
+            for i in range(1, len(image_paths) + 1):
+                column_name = f"IMAGEPATH{i}"
+                self.cursor.execute(f"PRAGMA table_info(MESSAGE)")
+                columns = [info[1] for info in self.cursor.fetchall()]
+                if column_name not in columns:
+                    self.cursor.execute(f"ALTER TABLE MESSAGE ADD COLUMN {column_name} TEXT")
+            self.db.connection.commit()
+
             image_path_fields = ", " + ', '.join([f"IMAGEPATH{i+1}" for i in range(len(image_paths))])
             image_path_values = ", " + ', '.join(['?' for _ in range(len(image_paths))])
         else:
             image_path_fields = ""
-            image_path_values = ""            
+            image_path_values = ""
+        
         query = f"INSERT INTO MESSAGE (CONTENT, USERID, CHANNELID, MESSAGEID, INSERT_DATE {image_path_fields}) VALUES (?, ?, ?, ?, ?{image_path_values})"
         self.cursor.execute(query, (message.content, userrecord["ID"], message.channel.id, message.id, current_datetime, *image_paths))
         self.db.connection.commit()

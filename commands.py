@@ -231,7 +231,7 @@ class MyCommands(commands.Cog):
         # Suche nach dem Ticket-Channel
         ticket_channel = None
         for channel in inter.guild.text_channels:
-            if channel.name.startswith("ticket") and str(ticket_id) in channel.name:
+            if "ticket" in channel.name.lower and str(ticket_id) in channel.name:
                 ticket_channel = channel
                 break
 

@@ -31,7 +31,8 @@ class Join(commands.Cog):
     async def get_guild_invites(self):
         invites = {}
         for guild in self.bot.guilds:
-            invites[guild.id] = await guild.invites()
+            guild_invites = await guild.invites()
+            invites[guild.id] = {invite.code: invite for invite in guild_invites}
         return invites
     
     def create_copy_mention_view(self):
@@ -82,7 +83,6 @@ class Join(commands.Cog):
                     f"In <#1039167130190491709> kannst du dir deine eigenen Rollen vergeben.\n"
                     f"In <#1039167960012554260> kannst du dich nach Möglichkeit vorstellen damit die anderen wissen wer du bist."
                 )
-                embed.set_image(url="https://media1.tenor.com/m/7-CNilpY-l8AAAAd/link-start-sao.gif")
                 channel = guild.get_channel(854698447247769630)  
 
                 guild = before.guild
@@ -155,7 +155,7 @@ class Join(commands.Cog):
         
         invites_after_join = await member.guild.invites()
         for invite in invites_after_join:
-            if invite.uses > self.invites_before_join[member.guild.id][invite.code].uses:
+            if invite.code in self.invites_before_join[member.guild.id] and invite.uses > self.invites_before_join[member.guild.id][invite.code].uses:
                 inviter_id = invite.inviter.id
                 current_date = self.globalfile.get_current_time().strftime('%Y-%m-%d')
 
@@ -177,7 +177,7 @@ class Join(commands.Cog):
                 self.logger.info(f"Einladung von {invite.inviter.name} (ID: {inviter_id}) wurde angenommen. INVITE_XP aktualisiert und USER-Tabelle aktualisiert.")
                 break
 
-        self.invites_before_join[member.guild.id] = invites_after_join
+        self.invites_before_join[member.guild.id] = {invite.code: invite for invite in invites_after_join}
                 
 class CopyMentionButton(disnake.ui.Button):                
     def __init__(self):

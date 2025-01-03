@@ -3,6 +3,7 @@ from disnake.ext import commands
 import sqlite3
 import logging
 import os
+from typing import Union
 
 class RoleAssignment(commands.Cog):
     def __init__(self, bot):
@@ -65,7 +66,10 @@ class RoleAssignment(commands.Cog):
                     emojifetched: disnake.Emoji = None
                     emojifetched = self.get_emoji_by_name(channel.guild, emoji)
                     try:
-                        description += f"<:{emojifetched.name}:{emojifetched.id}> = {role.name}\n"
+                        if emojifetched.id is not None and emojifetched.id != "":
+                            description += f"<:{emojifetched.name}:{emojifetched.id}> = {role.name}\n"
+                        else:                            
+                            description += f":{emojifetched.name}: = {role.name}\n"
                     except Exception as e:
                         self.logger.error(f"Error adding role ({emoji}) to description: {e}")
 
@@ -93,12 +97,18 @@ class RoleAssignment(commands.Cog):
         self.cursor.execute("UPDATE UNIQUE_MESSAGE SET MESSAGEID = ? WHERE MESSAGETYPE = ?", (message.id, message_type))
         self.db.commit()
         
-    def get_emoji_by_name(self, guild: disnake.Guild, emoji_name: str) -> disnake.Emoji:
+    def get_emoji_by_name(self, guild: disnake.Guild, emoji_name: str) -> Union[disnake.Emoji, disnake.PartialEmoji, None]:
+        # Check custom emojis in the guild
         for emoji in guild.emojis:
             if emoji.name == emoji_name:
                 return emoji
-        return None        
-        
+
+        # Check general Discord emojis
+        try:
+            return disnake.PartialEmoji.from_str(emoji_name)
+        except ValueError:
+            return None
+            
     @commands.slash_command(guild_ids=[854698446996766730])
     async def create_embed(self, inter: disnake.ApplicationCommandInteraction, message_type: str, channel: disnake.TextChannel):
         await inter.response.defer(ephemeral=True)
