@@ -56,8 +56,8 @@ class RoleAssignment(commands.Cog):
         if not result:
             self.logger.error(f"No data found for message type: {message_type}")
             return
-
-        description = f"{result[4].replace('\\n', '\n')}\n\n"  # Assuming DESCRIPTION is the second column
+        description = result[4].replace('\\n', '\n')
+        description = f"{description}\n\n"  # Assuming DESCRIPTION is the second column
         roles_found = False
         for i in range(1, 31):
             role_id = result[7 + (i - 1) * 2]  # Adjust the index based on your table structure
