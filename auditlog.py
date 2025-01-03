@@ -123,8 +123,10 @@ class AuditLog(commands.Cog):
             color=disnake.Color.blue(),
             timestamp=datetime.utcnow()
         )
-
-        embed.set_author(name=author_name, icon_url=thumbnail_url)
+        if thumbnail_url is not None and thumbnail_url != "":
+            embed.set_author(name=author_name, icon_url=thumbnail_url)
+        else:
+            embed.set_author(name=author_name)
         embed.add_field(name="Responsible User", value=entry.user.mention, inline=True)
         embed.add_field(name="Action", value=action.name, inline=True)
 

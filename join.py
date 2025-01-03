@@ -6,6 +6,9 @@ from dbconnection import DatabaseConnection
 from globalfile import Globalfile
 import pyperclip
 import openai
+import os
+from datetime import datetime, timedelta, timedelta, date, timezone
+import time
 
 class Join(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -178,6 +181,44 @@ class Join(commands.Cog):
                 break
 
         self.invites_before_join[member.guild.id] = {invite.code: invite for invite in invites_after_join}
+        
+    async def check_account_age_and_ban(self, member: disnake.Member):
+        min_account_age_days = int(os.getenv("MIN_ACCOUNT_AGE_DAYS", 7))
+        account_age = (Globalfile.get_current_time() - member.created_at).days
+
+        if account_age < min_account_age_days:
+            # Sende ein Embed an den Benutzer
+            embed = disnake.Embed(
+                title="Account zu jung",
+                description=f"Dein Account muss mindestens {min_account_age_days} Tage alt sein, um diesem Server beizutreten. Dein Account ist derzeit nur {account_age} Tage alt.",
+                color=disnake.Color.red()
+            )
+            try:
+                await member.send(embed=embed)
+            except disnake.Forbidden:
+                self.logger.warning(f"Konnte keine Nachricht an {member.name} ({member.id}) senden. Möglicherweise hat der Benutzer DMs deaktiviert.")
+            
+            # Ban den Benutzer für einen Tag
+            duration_seconds = 24 * 60 * 60  # 1 Tag in Sekunden
+            ban_end_time = Globalfile.get_current_time() + timedelta(seconds=duration_seconds)
+            ban_end_timestamp = int(ban_end_time.timestamp())
+            ban_end_formatted = ban_end_time.strftime('%Y-%m-%d %H:%M:%S')
+
+            try:
+                await member.ban(reason=f"Account is younger than {min_account_age_days} days.", delete_message_days=1)
+                self.logger.info(f"Benutzer {member.name} (ID: {member.id}) wurde für einen Tag gebannt, da der Account nur {account_age} Tage alt ist.")
+                
+                # Speichere den Ban in der Datenbank
+                cursor = self.db.connection.cursor()
+                cursor.execute(
+                    "INSERT INTO BAN (USERID, REASON, BANNEDTO, DELETED_DAYS) VALUES (?, ?, ?, ?)",
+                    (member.id, f"Account is younger than {min_account_age_days} days.", ban_end_timestamp, 1)
+                )
+                self.db.connection.commit()
+            except disnake.Forbidden:
+                self.logger.error(f"Ich habe keine Berechtigung, {member.mention} zu bannen.")
+            except disnake.HTTPException as e:
+                self.logger.error(f"Ein Fehler ist aufgetreten: {e}")  
                 
 class CopyMentionButton(disnake.ui.Button):                
     def __init__(self):

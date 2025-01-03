@@ -4,6 +4,8 @@ import sqlite3
 import logging
 from dbconnection import DatabaseConnection
 from rolehierarchy import rolehierarchy
+from globalfile import Globalfile
+import datetime
 
 class Ticket(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -15,6 +17,7 @@ class Ticket(commands.Cog):
         self.logger.addHandler(handler)
         self.db: sqlite3.Connection = DatabaseConnection()
         self.cursor: sqlite3.Cursor = self.db.connection.cursor()
+        self.globalfile = Globalfile(self.bot)
 
         self.cursor.execute("""
             CREATE TABLE IF NOT EXISTS TICKET (
@@ -160,19 +163,36 @@ class Ticket(commands.Cog):
         claim_view.add_item(claim_button)
         claim_view.add_item(close_button)
         
+        globalfile_instance = Globalfile(self.bot)
+        current_time = globalfile_instance.get_current_time()
+        timestamp = int(current_time.timestamp())
+        
         if ticket_type.lower() == "verify ticket":
-            content = ("bitte schicke uns ein Bild von dir mit einem Zettel, auf dem dein Discord-Tag und das aktuelle Datum geschrieben sind. "
-                       "Anschließend erhälst du die <@1066793314482913391> Rolle, als Bestätigung deiner Identität.")
+            content = ("vielen Dank, dass du dich auf Date Night verifizieren möchtest.\n\n"
+                       "Bitte schicke uns ein Bild von dir mit einem Zettel, auf dem dein Discord-Tag und das aktuelle Datum geschrieben sind. "
+                       "Anschließend erhälst du die <@&1066793314482913391> Rolle, als Bestätigung deiner Identität.\n\n"
+                       "Bitte beachte, dass wir deine Daten nur für die Verifizierung verwenden und sie nicht an Dritte weitergeben. Das Ticket wie auch das Bild werden nach der Verifizierung gelöscht. "
+                       "Wenn du Fragen zur Verifizierung hast, kannst du sie gerne hier im Ticket stellen.\n"
+                       f"Ticket wurde erstellt am: <t:{timestamp}:R>\n\nViele Grüße\nDas Date Night Team"
+                       )
         else:
-            content = ("bitte beschreibe dein Anliegen so detailliert wie möglich, damit wir dir schnell und "
-                       "effektiv helfen können.")
+            content = ("vielen Dank, dass du dich an uns gewendet hast. Wir sind da um dir zu helfen.\n\n"
+                       "Bitte schildere uns dein Anliegen so detailliert wie möglich, damit wir dir schnell und effektiv helfen können.\n\n"
+                       "Dazu könntest du uns folgende Informationen geben:\n"
+                       "- Was ist dein Anliegen?\n"
+                       "- Seit wann besteht das Problem?/Wann ist es aufgetreten?\n\n"
+                       f"Ticket wurde erstellt am: <t:{timestamp}:R>\n\nViele Grüße\nDas Date Night Team"
+            )
         # Create the embed for the message
         ticket_embed = disnake.Embed(
             title="Neues Ticket",
-            description=f"{interaction.user.mention}, {content}",
-            color=0x00ff00
+            description=f"Hey {interaction.user.mention},\n\n {content}",
+            color=0x98f5ff
         )        
         # Send the message in the new channel
+        ticket_embed.set_thumbnail(url=interaction.user.avatar.url)
+        ticket_embed.set_footer(text=f"Ticket ID: {next_id}")
+        ticket_embed.set_author(name=guild.name, icon_url=guild.icon.url)
         await ticket_channel.send(embed=ticket_embed, view=claim_view)
         await interaction.response.send_message(f"Dein Ticket wurde erfolgreich erstellt. {ticket_channel.mention}", ephemeral=True)   
 

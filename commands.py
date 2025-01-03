@@ -908,12 +908,16 @@ class MyCommands(commands.Cog):
         current_level = xp_info[1]
 
         # Berechne die XP für das nächste Level
+        cursor.execute("SELECT XP FROM LEVELXP WHERE LEVELNAME = ?", (current_level,))
+        current_level_xp = cursor.fetchone()
         cursor.execute("SELECT XP FROM LEVELXP WHERE LEVELNAME = ?", (current_level + 1,))
         next_level_xp = cursor.fetchone()
-        if next_level_xp:
+
+        if current_level_xp and next_level_xp:
+            current_level_xp = int(current_level_xp[0])
             next_level_xp = int(next_level_xp[0])
             xp_to_next_level = next_level_xp - total_xp
-            xp_percentage = (total_xp / next_level_xp) * 100
+            xp_percentage = ((total_xp - current_level_xp) / (next_level_xp - current_level_xp)) * 100
         else:
             xp_to_next_level = 0
             xp_percentage = 100
@@ -933,8 +937,8 @@ class MyCommands(commands.Cog):
         # Füge XP und Level hinzu
         embed.add_field(name="✨ **Level**", value=(
                         f"Aktuelle Level: {current_level}\n"
-                        f"XP: {total_xp} XP\n"
-                        f"XP bis zum nächsten Level: {xp_to_next_level} XP ({xp_percentage:.2f}%)"
+                        f"XP: {total_xp//10} XP\n"
+                        f"XP bis zum nächsten Level: {xp_to_next_level//10} XP ({xp_percentage:.2f}%)"
                         ), inline=False)               
 
         # Füge Geburtsdatum hinzu, falls vorhanden
