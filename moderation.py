@@ -359,7 +359,7 @@ class Moderation(commands.Cog):
         # Berechnen der Banndauer
         if duration != "0s":
             duration_seconds = self.globalfile.convert_duration_to_seconds(duration)
-            ban_end_time = self.globalfile.get_current_time + timedelta(seconds=duration_seconds)
+            ban_end_time = self.globalfile.get_current_time() + timedelta(seconds=duration_seconds)
             ban_end_timestamp = int(ban_end_time.timestamp())
             ban_end_formatted = ban_end_time.strftime('%Y-%m-%d %H:%M:%S')
         else:
