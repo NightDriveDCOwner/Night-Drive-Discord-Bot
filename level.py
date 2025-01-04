@@ -317,33 +317,6 @@ class Level(commands.Cog):
 
     @commands.slash_command(guild_ids=[854698446996766730])
     @rolehierarchy.check_permissions("Administrator")
-    async def set_factor(self, inter: disnake.ApplicationCommandInteraction, value: int):
-        """Setzt den Faktor für MESSAGE und VOICE XP."""
-        load_dotenv(dotenv_path="envs/settings.env", override=True)
-        self.factor = value  # Faktor als Prozentwert
-        set_key("envs/settings.env", "FACTOR", str(value))
-        
-        # Aktualisiere die EXPERIENCE Tabelle
-        cursor = self.db.connection.cursor()
-        cursor.execute("SELECT USERID FROM EXPERIENCE")
-        experience_data = cursor.fetchall()
-
-        for user_id in experience_data:
-            user_id = user_id[0]
-            cursor.execute("SELECT SUM(MESSAGE) FROM MESSAGE_XP WHERE USERID = ?", (user_id,))
-            total_message_xp = cursor.fetchone()[0] or 0
-            cursor.execute("SELECT SUM(VOICE) FROM VOICE_XP WHERE USERID = ?", (user_id,))
-            total_voice_xp = cursor.fetchone()[0] or 0
-
-            new_message_xp = total_message_xp * self.factor
-            new_voice_xp = total_voice_xp * self.message_worth_per_voicemin * self.factor
-            cursor.execute("UPDATE EXPERIENCE SET MESSAGE = ?, VOICE = ? WHERE USERID = ?", (new_message_xp, new_voice_xp, user_id))
-        self.db.connection.commit()
-
-        await inter.response.send_message(f"Der Faktor wurde auf {value}% gesetzt und die EXPERIENCE Tabelle wurde aktualisiert.", ephemeral=True)
-
-    @commands.slash_command(guild_ids=[854698446996766730])
-    @rolehierarchy.check_permissions("Administrator")
     async def recalculate_experience(self, inter: disnake.ApplicationCommandInteraction):
         """Berechnet die EXPERIENCE Werte aus der MESSAGE_XP und VOICE_XP Tabelle neu."""
         await inter.response.defer()

@@ -41,6 +41,14 @@ class MyCommands(commands.Cog):
             handler = logging.StreamHandler()
             handler.setFormatter(formatter)
             self.logger.addHandler(handler)
+            
+        load_dotenv(dotenv_path="envs/settings.env")
+        self.settings_keys = [
+            "FACTOR",
+            "MESSAGE_WORTH_PER_VOICEMIN",
+            "MIN_ACCOUNT_AGE_DAYS",
+            # Füge hier weitere Schlüssel hinzu, die änderbar sein sollen
+        ]            
         
         self.db: sqlite3.Connection = DatabaseConnection()
         self.cursor: sqlite3.Cursor = self.db.connection.cursor()            
@@ -978,7 +986,45 @@ class MyCommands(commands.Cog):
         self.logger.info(f"User profile requested for {inter.user.name} (ID: {inter.user.id}) by themselves.")
         await inter.edit_original_response(embed=embed)     
     
-    
+    @commands.slash_command(guild_ids=[854698446996766730])
+    @rolehierarchy.check_permissions("Administrator")
+    async def set_setting(self, inter: disnake.ApplicationCommandInteraction, key: str, value: str):
+        """Ändert einen Wert in der settings.env Datei."""
+        inter.response.defer()
+        if key not in self.settings_keys:
+            await inter.response.send_message(f"Ungültiger Schlüssel: {key}", ephemeral=True)
+            return
+        
+        await inter.response.send_message(f"Der Wert für {key} wurde auf {value} gesetzt.", ephemeral=True)
+        if key == "FACTOR":
+            load_dotenv(dotenv_path="envs/settings.env", override=True)
+            self.factor = value  # Faktor als Prozentwert
+            set_key("envs/settings.env", "FACTOR", str(value))
+            
+            # Aktualisiere die EXPERIENCE Tabelle
+            cursor = self.db.connection.cursor()
+            cursor.execute("SELECT USERID FROM EXPERIENCE")
+            experience_data = cursor.fetchall()
+
+            for user_id in experience_data:
+                user_id = user_id[0]
+                cursor.execute("SELECT SUM(MESSAGE) FROM MESSAGE_XP WHERE USERID = ?", (user_id,))
+                total_message_xp = cursor.fetchone()[0] or 0
+                cursor.execute("SELECT SUM(VOICE) FROM VOICE_XP WHERE USERID = ?", (user_id,))
+                total_voice_xp = cursor.fetchone()[0] or 0
+
+                new_message_xp = total_message_xp * self.factor
+                new_voice_xp = total_voice_xp * self.message_worth_per_voicemin * self.factor
+                cursor.execute("UPDATE EXPERIENCE SET MESSAGE = ?, VOICE = ? WHERE USERID = ?", (new_message_xp, new_voice_xp, user_id))
+            self.db.connection.commit()
+
+            await inter.response.send_message(f"Der Faktor wurde auf {value}% gesetzt und die EXPERIENCE Tabelle wurde aktualisiert.", ephemeral=True)
+        else:
+            set_key("envs/settings.env", key, value)
+
+    @set_setting.autocomplete("key")
+    async def set_setting_autocomplete(self, inter: disnake.ApplicationCommandInteraction, key: str):
+        return [key for key in self.settings_keys if key.startswith(key)]
         
 def setupCommands(bot: commands.Bot):
     bot.add_cog(MyCommands(bot))

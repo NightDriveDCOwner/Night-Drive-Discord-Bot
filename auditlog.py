@@ -88,7 +88,6 @@ class AuditLog(commands.Cog):
         self.db.connection.commit()
         load_dotenv(dotenv_path="envs/settings.env")
         self.channel_id = os.getenv("AUDITLOG_CHANNEL_ID")
-        self.logger.debug(f"Loaded channel ID: {self.channel_id}")  # Debug-Ausgabe
 
         self.user_data = {}
         self.TimerMustReseted = True
@@ -184,6 +183,11 @@ class AuditLog(commands.Cog):
         details = f"Action: {action.name}, Target: {entry.target}, Changes: {entry.changes}, Reason: {entry.reason}, Responsible User: {entry.user.name}"
         await self.log_audit_entry(action.name, entry.user.id, details)
         await self.send_audit_log_embed(action, entry)
-
+    
+    @commands.Cog.listener()
+    async def on_ready(self):
+        self.logger.info("AuditLog is ready.")
+        self.logger.debug(f"Loaded channel ID: {self.channel_id}")
+        
 def setupAuditLog(bot):
     bot.add_cog(AuditLog(bot))

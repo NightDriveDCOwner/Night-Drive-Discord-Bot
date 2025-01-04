@@ -50,7 +50,7 @@ class Join(commands.Cog):
                 model="gpt-3.5-turbo",
                 messages=[
                     {"role": "system", "content": context},
-                    {"role": "user", "content": f"Erstelle eine Willkommensnachricht für {user.name} mit einem Wortspiel der mit dem Benutzernamen zu tun hat. Bitte erwähne ebenfalls den Servername fett geschrieben."}
+                    {"role": "user", "content": f"Erstelle eine Willkommensnachricht für {user.name} mit einem Wortspiel der mit dem Benutzernamen zu tun hat wenn es möglich ist. Bitte mache dieses Wortspiel nicht zu cringe. Bitte erwähne ebenfalls den Servername fett geschrieben. Bitte gebe die Willkommensnachricht selbst direkt zurück."}
                 ],
                 max_tokens=80
             )

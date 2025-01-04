@@ -1,5 +1,7 @@
 import disnake
 from disnake.ext import commands
+from disnake import SelectOption
+from disnake.ui import Select, View
 import sqlite3
 import logging
 import os
@@ -44,6 +46,19 @@ class RoleAssignment(commands.Cog):
                 self.cursor.execute(f"ALTER TABLE UNIQUE_MESSAGE ADD COLUMN {emoji_column} TEXT")
 
         self.db.commit()
+        
+    @commands.slash_command(guild_ids=[854698446996766730])
+    async def create_roles_embeds(self, inter: disnake.ApplicationCommandInteraction, channel: disnake.TextChannel):
+        await inter.response.defer(ephemeral=True)
+        await self.create_embed_message(channel, "ORIGIN")
+        await self.create_embed_message(channel, "GAMES")
+        await self.create_embed_message(channel, "PERSONALITY")
+        await self.create_embed_message(channel, "RELATIONSIP_STATUS")
+        await self.create_embed_message(channel, "EXTRA_ROLES")
+        await self.create_embed_message(channel, "DIRECT_MESSAGE") 
+        await self.create_embed_message(channel, "EXTRA_BOT")                
+        await inter.edit_original_response("Die Roles Embeds wurden erstellt.")      
+        self.logger.info(f"Roles Embeds created by {inter.user.name} ({inter.user.id}).")
 
     @commands.Cog.listener()
     async def on_ready(self):
@@ -59,6 +74,7 @@ class RoleAssignment(commands.Cog):
         description = result[4].replace('\\n', '\n')
         description = f"{description}\n\n"  # Assuming DESCRIPTION is the second column
         roles_found = False
+        options = []
         for i in range(1, 31):
             role_id = result[7 + (i - 1) * 2]  # Adjust the index based on your table structure
             emoji = result[8 + (i - 1) * 2]  # Adjust the index based on your table structure
@@ -66,17 +82,20 @@ class RoleAssignment(commands.Cog):
                 role = channel.guild.get_role(role_id)
                 if role:
                     roles_found = True
+                    emojifetched: disnake.Emoji = None
                     emojifetched = self.get_emoji_by_name(channel.guild, emoji)
                     if emojifetched is None or emojifetched.name is None or emojifetched.name == "":
                         description += f":{emoji}: = {role.name}\n"
                     try:
-                        if emojifetched.id is not None and emojifetched.id != "":
+                        emojifetched = self.get_manual_emoji(emoji)
+                        if hasattr(emojifetched, 'id') and emojifetched.id is not None:
                             description += f"<:{emojifetched.name}:{emojifetched.id}> = {role.name}\n"
                         else:
-                            description += f":{emojifetched.name}: = {role.name}\n"
+                            description += f":{emojifetched}: = {role.name}\n"
+                        options.append(SelectOption(label=role.name, value=str(role_id), emoji=emojifetched))
                     except Exception as e:
                         self.logger.error(f"Error adding role ({emoji}) to description: {e}")
-
+        
         embed = disnake.Embed(
             title=result[3],  # Assuming TITLE is the first column
             description=f"{description}",
@@ -87,23 +106,27 @@ class RoleAssignment(commands.Cog):
 
         message = await channel.send(embed=embed)
 
-        if roles_found:
-            for i in range(1, 31):
-                role_id = result[7 + (i - 1) * 2]  # Adjust the index based on your table structure
-                emoji = result[8 + (i - 1) * 2]  # Adjust the index based on your table structure
-                if role_id and emoji:
-                    try:
-                        emojifetched = self.get_emoji_by_name(channel.guild, emoji)
-                        if emojifetched.id is not None:
-                            await message.add_reaction(emojifetched)
-                        else:                                                        
-                            emojifetched = self.get_manual_emoji(emoji)
-                            await message.add_reaction(emojifetched)
-                    except Exception as e:
-                        self.logger.error(f"Error adding reaction ({emoji}) to message: {e}")
+        if message_type == "COLOR" and roles_found:
+            select = Select(
+                placeholder="Choose your role...",
+                options=options,
+                custom_id="role_select"
+            )
+            view = View()
+            view.add_item(select)
+            await message.edit(view=view)
 
         self.cursor.execute("UPDATE UNIQUE_MESSAGE SET MESSAGEID = ? WHERE MESSAGETYPE = ?", (message.id, message_type))
-        self.db.commit()  
+        self.db.commit()
+
+    commands.Cog.listener()
+    async def on_dropdown(self, inter: disnake.MessageInteraction):
+        if inter.custom_id == "role_select":
+            role_id = int(inter.values[0])
+            role = inter.guild.get_role(role_id)
+            if role:
+                await inter.author.add_roles(role)
+                await inter.response.send_message(f"Role {role.name} has been added to you.", ephemeral=True)
         
     def get_emoji_by_name(self, guild: disnake.Guild, emoji_name: str) -> Union[disnake.Emoji, disnake.PartialEmoji, None]:
         # Check custom emojis in the guild
@@ -183,6 +206,8 @@ class RoleAssignment(commands.Cog):
 
     def get_manual_emoji(self, emoji_name: str) -> disnake.Emoji:
         emoji_dict = {
+            "keycap_ten": "🔟",
+            "capital_abcd": "🔠",
             "newspaper": "📰",
             "sparkler": "🎇",
             "sparkles": "✨",
@@ -201,6 +226,7 @@ class RoleAssignment(commands.Cog):
             "seven": "7️⃣",
             "eight": "8️⃣",
             "nine": "9️⃣",
+            "ten": "🔟",
             "circle": "⚪",
             "blue_circle": "🔵",
             "red_circle": "🔴",
@@ -667,7 +693,8 @@ class RoleAssignment(commands.Cog):
             "placard": "🪧",
             "transgender_flag": "🏳️‍⚧️",
             "transgender_symbol": "⚧️",
-            "up": "⬆️",
+            "arrow_up": "⬆️",
+            "arrow_down": "⬇️",
         }
         return emoji_dict.get(emoji_name, None)
 
