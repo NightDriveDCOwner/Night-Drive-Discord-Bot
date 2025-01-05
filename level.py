@@ -321,12 +321,15 @@ class Level(commands.Cog):
         """Berechnet die EXPERIENCE Werte aus der MESSAGE_XP und VOICE_XP Tabelle neu."""
         await inter.response.defer()
         cursor = self.db.connection.cursor()
+        load_dotenv(dotenv_path="envs/settings.env", override=True)
+        self.factor = int(os.getenv("FACTOR"))
 
         cursor.execute("SELECT USERID, SUM(MESSAGE) FROM MESSAGE_XP GROUP BY USERID")
         message_xp_data = cursor.fetchall()
 
         cursor.execute("SELECT USERID, SUM(VOICE) FROM VOICE_XP GROUP BY USERID")
         voice_xp_data = cursor.fetchall()
+        
 
         for user_id, total_message_xp in message_xp_data:
             cursor.execute("UPDATE EXPERIENCE SET MESSAGE = ? WHERE USERID = ?", (total_message_xp * self.factor, user_id))

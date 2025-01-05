@@ -89,7 +89,7 @@ class Join(commands.Cog):
                 channel = guild.get_channel(854698447247769630)  
 
                 guild = before.guild
-                mod_embed = disnake.Embed(title="Neuer Benutzer Beigetreten", color=0xFF0000)
+                mod_embed = disnake.Embed(title="Neuer Benutzer Beigetreten", color=0x00FF00)
                 mod_embed.add_field(name="Benutzername", value=before.name, inline=True)
                 mod_embed.add_field(name="Benutzer ID", value=before.id, inline=True)
                 mod_embed.add_field(name="Erwähnung", value=before.mention, inline=True)
@@ -181,6 +181,7 @@ class Join(commands.Cog):
                 break
 
         self.invites_before_join[member.guild.id] = {invite.code: invite for invite in invites_after_join}
+        self.check_account_age_and_ban(member)
         
     async def check_account_age_and_ban(self, member: disnake.Member):
         min_account_age_days = int(os.getenv("MIN_ACCOUNT_AGE_DAYS", 7))

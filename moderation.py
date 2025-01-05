@@ -345,12 +345,12 @@ class Moderation(commands.Cog):
             self.logger.critical(f"An error occurred: {e}")
                        
     @commands.slash_command(guild_ids=[854698446996766730])
-    @rolehierarchy.check_permissions("Senior Supporter")
+    @rolehierarchy.check_permissions("Supporter")
     async def ban(self, 
                   inter: disnake.ApplicationCommandInteraction, 
                   member: disnake.Member = commands.Param(name="benutzer", description="Der Benutzer, der gebannt werden soll."), 
                   reason: str = commands.Param(name="begründung", description="Grund warum der Benutzer gebannt werden soll", default="Kein Grund angegeben"),
-                  duration: str = commands.Param(name="dauer", description="Dauer des Bans in Sek., Min., Std., Tagen oder Jahre.(Bsp.: 0s0m0h0d0j) Nichts angegeben = Dauerhaft", default=""),
+                  duration: str = commands.Param(name="dauer", description="Dauer des Bans in Sek., Min., Std., Tagen oder Jahre.(Bsp.: 0s0m0h0d0j) Nichts angegeben = Dauerhaft", default="0s"),
                   delete_days: int = commands.Param(name="geloeschte_nachrichten", description="Anzahl der Tage, für die Nachrichten des Benutzers gelöscht werden sollen. (0-7, Default = 0)", default=0),
                   proof: disnake.Attachment = commands.Param(name="beweis", description="Ein Bild als Beweis für den Ban und zur Dokumentation", default=None)):
         """Banne einen Benutzer und speichere ein Bild als Beweis."""
@@ -363,6 +363,7 @@ class Moderation(commands.Cog):
             ban_end_timestamp = int(ban_end_time.timestamp())
             ban_end_formatted = ban_end_time.strftime('%Y-%m-%d %H:%M:%S')
         else:
+            duration_seconds = self.globalfile.convert_duration_to_seconds(duration)
             ban_end_timestamp = None
             ban_end_formatted = "Unbestimmt"
 
@@ -390,7 +391,11 @@ class Moderation(commands.Cog):
 
             if ban_successful:
                 if proof:
-                    image_path = await self.globalfile.save_image(proof, f"{member.id}_{duration_seconds}")
+                    if duration_seconds is None:
+                        image_path = await self.globalfile.save_image(proof, f"{member.id}_infinitely")
+                    else:
+                        image_path = await self.globalfile.save_image(proof, f"{member.id}_{duration_seconds}")
+                
 
                 cursor.execute(
                     "INSERT INTO BAN (USERID, REASON, BANNEDTO, DELETED_DAYS, IMAGEPATH) VALUES (?, ?, ?, ?, ?)",
@@ -415,7 +420,7 @@ class Moderation(commands.Cog):
             self.logger.info(f"User {member.id} ban not possible. User is already banned.")
 
     @commands.slash_command(guild_ids=[854698446996766730])
-    @rolehierarchy.check_permissions("Moderator")
+    @rolehierarchy.check_permissions("Senior Supporter")
     async def unban(self, inter: disnake.ApplicationCommandInteraction, 
                     userid: int = commands.param(name="userid", description="Hier kannst du die UserID unserer Datenbank angeben.", default=0), 
                     username: str = commands.Param(name="username", description="Hier kannst du den Benutzernamen angeben, falls die UserID nicht bekannt ist.", default=""), 
@@ -508,7 +513,7 @@ class Moderation(commands.Cog):
         self.logger.info(f"{len(members_to_kick1)+len(members_to_kick2)} Benutzer wurden gekickt.")
  
     @commands.slash_command(guild_ids=[854698446996766730])
-    @rolehierarchy.check_permissions("Senior Supporter")
+    @rolehierarchy.check_permissions("Supporter")
     async def kick(self, 
                 inter: disnake.ApplicationCommandInteraction, 
                 member: disnake.Member = commands.Param(name="benutzer", description="Der Benutzer, der gekickt werden soll."), 

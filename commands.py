@@ -314,7 +314,7 @@ class MyCommands(commands.Cog):
     @commands.slash_command(guild_ids=[854698446996766730])
     @rolehierarchy.check_permissions("Test-Supporter")
     async def user_profile(self, inter: disnake.ApplicationCommandInteraction, user: disnake.User):
-        """Zeigt das Profil eines Benutzers an, einschließlich Notizen und Warnungen."""
+        """Zeigt das Profil eines Benutzers an, einschließlich Notizen, Warnungen und Bans."""
         await inter.response.defer()
         cursor = self.db.connection.cursor()
         userrecord = self.globalfile.get_user_record(discordid=user.id)
@@ -334,6 +334,10 @@ class MyCommands(commands.Cog):
         # Hole alle Warnungen des Benutzers aus der Tabelle Warn
         cursor.execute("SELECT * FROM WARN WHERE USERID = ?", (userrecord['ID'],))
         warns = cursor.fetchall()
+
+        # Hole alle Bans des Benutzers aus der Tabelle Ban
+        cursor.execute("SELECT * FROM BAN WHERE USERID = ?", (userrecord['ID'],))
+        bans = cursor.fetchall()
 
         # Hole die Anzahl der geschriebenen Nachrichten
         cursor.execute("SELECT COUNT(*) FROM MESSAGE WHERE USERID = ?", (userrecord['ID'],))
@@ -389,8 +393,50 @@ class MyCommands(commands.Cog):
         else:
             embed.add_field(name="Warnungen", value="Keine Warnungen vorhanden.", inline=False)
 
+        # Füge Bans hinzu
+        if bans:
+            for ban in bans:
+                caseid = ban[0]
+                reason = ban[2]
+                ban_end_timestamp = ban[3]
+                image_path = ban[5]
+                unban_status = ban[6]  # Assuming 'Unban' is the 7th column in the BAN table
+
+                ban_text = f"Grund: {reason}"
+                if ban_end_timestamp:
+                    ban_end_time = datetime.fromtimestamp(ban_end_timestamp).strftime('%Y-%m-%d %H:%M:%S')
+                    ban_text += f"\nEnde des Bans: {ban_end_time}"
+                else:
+                    ban_text += "\nEnde des Bans: Unbestimmt"
+
+                if unban_status == 1:
+                    ban_text += "\nStatus: Ban aufgehoben"
+                else:
+                    ban_text += "\nStatus: Ban aktiv"
+
+                if image_path:
+                    ban_text += f"\nBildpfad: {image_path}"
+                embed.add_field(name=f"Ban [ID: {caseid}]", value=ban_text, inline=False)
+                if image_path and os.path.exists(image_path):
+                    embed.set_image(file=disnake.File(image_path))
+        else:
+            embed.add_field(name="Bans", value="Keine Bans vorhanden.", inline=False)
+
+        # Überprüfe die Größe des Embeds und teile es bei Bedarf auf
+        embeds = [embed]
+        if len(embed.fields) > 25:
+            embed2 = disnake.Embed(title=f"Profil von {user.name} (Fortsetzung)", color=disnake.Color.blue())
+            embed2.set_author(name=user.name, icon_url=user.avatar.url if user.avatar else user.default_avatar.url)
+            embed2.set_footer(text=f"ID: {user_info[1]} | {user_info[0]} - heute um {current_time} Uhr")
+            embed2.add_field(name="📨 **Nachrichten**", value=f"{message_count} Nachrichten", inline=False)
+            embed2.add_field(name="🎙️ **Voice-Aktivität**", value=f"{voice_minutes} Minuten", inline=False)
+            if user_info[4]:
+                embed2.add_field(name="🎂 **Geburtstag**", value=user_info[4], inline=False)
+            embeds = [embed, embed2]
+
         self.logger.info(f"User profile requested for {user.name} (ID: {user.id}) by {inter.author.name}. (ID: {inter.author.id})")
-        await inter.edit_original_response(embed=embed)
+        for e in embeds:
+            await inter.edit_original_response(embed=e)
 
     @commands.slash_command(guild_ids=[854698446996766730])
     @rolehierarchy.check_permissions("Co Owner")
@@ -999,7 +1045,11 @@ class MyCommands(commands.Cog):
         if key == "FACTOR":
             load_dotenv(dotenv_path="envs/settings.env", override=True)
             self.factor = value  # Faktor als Prozentwert
-            set_key("envs/settings.env", "FACTOR", str(value))
+            self.message_worth_per_voicemin = float(os.getenv("MESSAGE_WORTH_PER_VOICEMIN"))
+            if key == "FACTOR":
+                set_key("envs/settings.env", "FACTOR", str(value))
+            if key == "MESSAGE_WORTH_PER_VOICEMIN":
+                set_key("envs/settings.env", "MESSAGE_WORTH_PER_VOICEMIN", str(value))                
             
             # Aktualisiere die EXPERIENCE Tabelle
             cursor = self.db.connection.cursor()
@@ -1018,7 +1068,7 @@ class MyCommands(commands.Cog):
                 cursor.execute("UPDATE EXPERIENCE SET MESSAGE = ?, VOICE = ? WHERE USERID = ?", (new_message_xp, new_voice_xp, user_id))
             self.db.connection.commit()
 
-            await inter.response.send_message(f"Der Faktor wurde auf {value}% gesetzt und die EXPERIENCE Tabelle wurde aktualisiert.", ephemeral=True)
+            inter.channel.send(f"Der Faktor wurde auf {value}% gesetzt und die EXPERIENCE Tabelle wurde aktualisiert.")
         else:
             set_key("envs/settings.env", key, value)
 
