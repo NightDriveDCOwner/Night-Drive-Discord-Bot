@@ -269,8 +269,8 @@ class Level(commands.Cog):
             f"Du hast Level {new_level} erreicht! 🎉\n"
             f"Vielen Dank für deine Aktivität! 🥳"
         )
-        embed = disnake.Embed(title=f"**{user.name} 🔼{new_level}**", description=description, color=disnake.Color.green())
-        self.logger.info(f"Level Up Message sent for {user.name} (ID: {user.id}) (Test)")
+        embed = disnake.Embed(title=f"**{user.name} 🎖️ {new_level}**", description=description, color=disnake.Color.green())
+        self.logger.info(f"Level Up Message sent for {user.name}. (ID: {user.id})")
         embed.set_thumbnail(url=user.avatar.url)
         await channel.send(content=f"{user.mention}", embed=embed)
 
@@ -329,7 +329,7 @@ class Level(commands.Cog):
 
         cursor.execute("SELECT USERID, SUM(VOICE) FROM VOICE_XP GROUP BY USERID")
         voice_xp_data = cursor.fetchall()
-        
+
 
         for user_id, total_message_xp in message_xp_data:
             cursor.execute("UPDATE EXPERIENCE SET MESSAGE = ? WHERE USERID = ?", (total_message_xp * self.factor, user_id))
