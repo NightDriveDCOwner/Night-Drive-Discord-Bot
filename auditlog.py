@@ -104,6 +104,7 @@ class AuditLog(commands.Cog):
         self.TimerMustReseted = True
 
     async def send_audit_log_embed(self, action: disnake.AuditLogAction, entry: disnake.AuditLogEntry):
+        thumbnail_url = None
         if isinstance(entry.target, disnake.User) or isinstance(entry.target, disnake.Member):
             author_name = entry.target.name
             try:

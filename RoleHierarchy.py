@@ -13,7 +13,7 @@ class rolehierarchy:
                 "Senior Moderator",
                 "Administrator",
                 "Leitung",
-                "Co. Owner",
+                "Co Owner",
                 "Owner"
             ]
             self.logger = logging.getLogger("rolehierarchy")

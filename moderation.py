@@ -553,6 +553,36 @@ class Moderation(commands.Cog):
                 embed.set_image(url=proof.url)  # Setze das Bild des Beweises, falls vorhanden
 
             await inter.edit_original_response(embed=embed)
+
+    @commands.slash_command(guild_ids=[854698446996766730])
+    @commands.has_permissions(manage_messages=True)
+    async def delete_messages_after(self, inter: disnake.ApplicationCommandInteraction, 
+                                    channel: disnake.TextChannel = commands.Param(name="channel", description="Der Kanal, in dem die Nachrichten gelöscht werden sollen."),
+                                    timestamp: str = commands.Param(name="timestamp", description="Der Zeitpunkt (im Format YYYY-MM-DD HH:MM:SS) nach dem die Nachrichten gelöscht werden sollen.")):
+        """Lösche alle Nachrichten in einem Kanal nach einer bestimmten Uhrzeit."""
+        await inter.response.defer()
+
+        try:
+            delete_after = datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            await inter.edit_original_response(content="Ungültiges Zeitformat. Bitte verwende das Format YYYY-MM-DD HH:MM:SS.")
+            return
+
+        deleted_messages = 0
+        async for message in channel.history(after=delete_after, oldest_first=False):
+            try:
+                await message.delete()
+                deleted_messages += 1
+            except disnake.Forbidden:
+                await inter.edit_original_response(content="Ich habe keine Berechtigung, Nachrichten zu löschen.")
+                return
+            except disnake.HTTPException as e:
+                await inter.edit_original_response(content=f"Ein Fehler ist aufgetreten: {e}")
+                return
+
+        await inter.edit_original_response(content=f"{deleted_messages} Nachrichten wurden gelöscht.")    
+    
+
        
 def setupModeration(bot: commands.Bot):
     bot.add_cog(Moderation(bot))                

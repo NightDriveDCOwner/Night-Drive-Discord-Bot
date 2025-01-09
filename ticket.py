@@ -5,7 +5,8 @@ import logging
 from dbconnection import DatabaseConnection
 from rolehierarchy import rolehierarchy
 from globalfile import Globalfile
-import datetime
+from datetime import datetime
+import os
 
 class Ticket(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -37,6 +38,83 @@ class Ticket(commands.Cog):
             )
         """)
         self.db.connection.commit()
+
+    async def fetch_channel_messages(self, channel: disnake.TextChannel):
+        messages = []
+        async for message in channel.history(limit=None):
+            messages.append(message)
+        return messages
+
+    def format_messages_to_html(self, messages):
+        html_content = "<html><head><title>Chat History</title></head><body>"
+        for message in messages:
+            html_content += f"<p><strong>{message.author.name}:</strong> {message.content}</p>"
+        html_content += "</body></html>"
+        return html_content
+
+    async def save_html_to_file(self, html_content, file_path):
+        with open(file_path, 'w', encoding='utf-8') as file:
+            file.write(html_content)
+
+    async def export_chat(self, channel: disnake.TextChannel):
+        messages = await self.fetch_channel_messages(channel)
+        html_content = self.format_messages_to_html(messages)
+        file_path = os.path.join(os.getcwd(), f"{channel.name}_chat_history.html")
+        await self.save_html_to_file(html_content, file_path)
+
+        self.logger.info(f"Chat history has been exported to {file_path}")
+
+    def format_messages_to_html(self, messages):
+        html_content = """
+        <html>
+        <head>
+            <style>
+                body {
+                    font-family: 'Arial', sans-serif;
+                    background-color: #36393f;
+                    color: #dcddde;
+                    padding: 20px;
+                }
+                .message {
+                    border-bottom: 1px solid #2f3136;
+                    padding: 10px;
+                    margin-bottom: 10px;
+                }
+                .message .author {
+                    font-weight: bold;
+                    color: #7289da;
+                }
+                .message .timestamp {
+                    font-size: 0.75em;
+                    color: #72767d;
+                    margin-left: 10px;
+                }
+                .message .content {
+                    margin-top: 5px;
+                }
+            </style>
+        </head>
+        <body>
+        """
+
+        for message in messages:
+            timestamp = message.created_at.strftime('%Y-%m-%d %H:%M:%S')
+            html_content += f"""
+            <div class="message">
+                <div class="author">{message.author.display_name}<span class="timestamp">{timestamp}</span></div>
+                <div class="content">{message.content}</div>
+            </div>
+            """
+
+        html_content += """
+        </body>
+        </html>
+        """
+        return html_content
+
+    async def save_html_to_file(self, html_content, file_path):
+        with open(file_path, 'w', encoding='utf-8') as file:
+            file.write(html_content)        
 
     @commands.Cog.listener()
     async def on_ready(self):
@@ -222,7 +300,7 @@ class Ticket(commands.Cog):
         # Setze das Ticket in der Datenbank auf "DONE"
         self.cursor.execute("UPDATE TICKET SET DONE = 1 WHERE ID = ?", (ticket_id,))
         self.db.connection.commit()
-
+        await self.export_chat(interaction.channel)
         # Schließe den Kanal
         await interaction.channel.delete()
 
@@ -311,6 +389,8 @@ class Ticket(commands.Cog):
         await self.check_and_update_message(self.bot.get_channel(1323005558730657812), verify_ticket_embed, "Verify Ticket", verify_ticket_view)        
         self.logger.info("Ticket Embeds have been created/updated.")
         await inter.edit_original_response(content="Ticket Embeds wurden erstellt/aktualisiert.")    
+
+    
 
 def setupTicket(bot):
     bot.add_cog(Ticket(bot))

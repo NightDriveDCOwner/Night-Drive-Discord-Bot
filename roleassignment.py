@@ -7,6 +7,7 @@ import logging
 import os
 from typing import Union
 import emoji
+from rolehierarchy import rolehierarchy
 
 class RoleAssignment(commands.Cog):
     def __init__(self, bot):
@@ -48,6 +49,7 @@ class RoleAssignment(commands.Cog):
         self.db.commit()
         
     @commands.slash_command(guild_ids=[854698446996766730])
+    @rolehierarchy.check_permissions("Co Owner")
     async def create_roles_embeds(self, inter: disnake.ApplicationCommandInteraction, channel: disnake.TextChannel):
         await inter.response.defer(ephemeral=True)
         await self.create_embed_message(channel, "ORIGIN")
@@ -67,7 +69,7 @@ class RoleAssignment(commands.Cog):
     async def create_embed_message(self, channel: disnake.TextChannel, message_type: str):
         self.cursor.execute("SELECT * FROM UNIQUE_MESSAGE WHERE MESSAGETYPE = ?", (message_type,))
         result = self.cursor.fetchone()
-
+        role_count = sum(1 for i in range(1, 31) if result[7 + (i - 1) * 2])
         if not result:
             self.logger.error(f"No data found for message type: {message_type}")
             return
@@ -83,18 +85,19 @@ class RoleAssignment(commands.Cog):
                 if role:
                     roles_found = True
                     emojifetched: disnake.Emoji = None
-                    emojifetched = self.get_emoji_by_name(channel.guild, emoji)
-                    if emojifetched is None or emojifetched.name is None or emojifetched.name == "":
-                        description += f":{emoji}: = {role.name}\n"
-                    try:
-                        emojifetched = self.get_manual_emoji(emoji)
-                        if hasattr(emojifetched, 'id') and emojifetched.id is not None:
-                            description += f"<:{emojifetched.name}:{emojifetched.id}> = {role.name}\n"
-                        else:
-                            description += f":{emojifetched}: = {role.name}\n"
-                        options.append(SelectOption(label=role.name, value=str(role_id), emoji=emojifetched))
-                    except Exception as e:
-                        self.logger.error(f"Error adding role ({emoji}) to description: {e}")
+                    emojifetched = self.get_manual_emoji(emoji)
+                    if emojifetched != "" and emojifetched is not None:
+                        description += f"{emojifetched} = {role.name}\n"
+                    else:
+                        try:
+                            emojifetched = self.get_emoji_by_name(channel.guild, emoji)
+                            if hasattr(emojifetched, 'id') and emojifetched.id is not None:
+                                description += f"<:{emojifetched.name}:{emojifetched.id}> = {role.name}\n"
+                            elif hasattr(emojifetched, 'name') and emojifetched.name is not None and message_type == "COLOR":
+                                description += f"{emojifetched} = <@&{role.id}>\n"               
+                        except Exception as e:
+                            self.logger.error(f"Error adding role ({emoji}) to description: {e}")
+                    options.append(SelectOption(label=role.name, value=str(role_id), emoji=emojifetched))
         
         embed = disnake.Embed(
             title=result[3],  # Assuming TITLE is the first column
@@ -106,28 +109,140 @@ class RoleAssignment(commands.Cog):
 
         message = await channel.send(embed=embed)
 
-        if message_type == "COLOR" and roles_found:
+        if message_type in ["COLOR", "PERSONALITY", "ORIGIN","DIRECT_MESSAGE"] and roles_found:
             select = Select(
                 placeholder="Choose your role...",
                 options=options,
-                custom_id="role_select"
+                custom_id="role_select_one",
+                max_values=role_count,            
+                min_values=0
             )
             view = View()
             view.add_item(select)
             await message.edit(view=view)
+        else:
+            select = Select(
+                placeholder="Choose your role...",
+                options=options,
+                custom_id="role_select",
+                max_values=role_count,            
+                min_values=0
+            )
+            view = View()
+            view.add_item(select)
+            await message.edit(view=view)            
 
         self.cursor.execute("UPDATE UNIQUE_MESSAGE SET MESSAGEID = ? WHERE MESSAGETYPE = ?", (message.id, message_type))
         self.db.commit()
 
-    commands.Cog.listener()
-    async def on_dropdown(self, inter: disnake.MessageInteraction):
-        if inter.custom_id == "role_select":
-            role_id = int(inter.values[0])
-            role = inter.guild.get_role(role_id)
-            if role:
-                await inter.author.add_roles(role)
-                await inter.response.send_message(f"Role {role.name} has been added to you.", ephemeral=True)
+    async def create_embed_wo_reaction(self, message_type: str, channel: disnake.TextChannel):
+        self.cursor.execute("SELECT * FROM UNIQUE_MESSAGE WHERE MESSAGETYPE = ?", (message_type,))
+        result = self.cursor.fetchone()
+
+        if not result:
+            self.logger.error(f"No data found for message type: {message_type}")
+            return
+
+        description = result[4].replace('\\n', '\n')
+        description_lines = description.split('\n')
+        formatted_description = "\n".join([f"- {line}" if line.strip()[:2] in [f"{chr(97 + i)})" for i in range(26)] else line for line in description_lines])
+
+        embed = disnake.Embed(
+            title=result[3],  # Assuming TITLE is the first column
+            description=formatted_description,
+            color=0x00008B
+        )
+        if result[5] != "" and result[5] is not None:
+            embed.set_footer(text=result[5])  # Assuming FOOTER is the fifth column
+
+        await channel.send(embed=embed)
+
+    @commands.slash_command(guild_ids=[854698446996766730])
+    @rolehierarchy.check_permissions("Co Owner")    
+    async def create_rules_embeds(self, inter: disnake.ApplicationCommandInteraction, channel: disnake.TextChannel):
+        await inter.response.defer()
+        message_types = [f"RULES{i}" for i in range(1, 10)]
         
+        for message_type in message_types:
+            await self.create_embed_wo_reaction(message_type, channel)
+        
+        await inter.edit_original_response(content="All rule embeds have been created.")        
+
+
+    @commands.Cog.listener()
+    async def on_dropdown(self, inter: disnake.MessageInteraction):
+        if inter.component.custom_id == "role_select_one":
+            selected_role_ids = [int(role_id) for role_id in inter.values] if inter.values else []
+
+            # Check if more than one role is selected
+            if len(selected_role_ids) > 1:
+                await inter.response.send_message("Bitte wähle bei dieser Kategorie nur eine Rolle aus.", ephemeral=True)
+                return
+
+            selected_roles = [inter.guild.get_role(role_id) for role_id in selected_role_ids]
+
+            # Check if the user already has roles from the select menu
+            user_roles = inter.author.roles
+            role_ids = [option.value for option in inter.component.options]
+            existing_roles = [role for role in user_roles if str(role.id) in role_ids]
+
+            # Determine roles to add and remove
+            roles_to_add = []
+            roles_to_remove = []
+
+            for role in selected_roles:
+                if role not in existing_roles:
+                    roles_to_add.append(role)
+
+            for role in existing_roles:
+                if role not in selected_roles:
+                    roles_to_remove.append(role)
+
+            # Add new roles
+            for role in roles_to_add:
+                if role:
+                    await inter.author.add_roles(role)
+
+            # Remove deselected roles
+            for role in roles_to_remove:
+                if role:
+                    await inter.author.remove_roles(role)
+
+            await inter.response.defer(ephemeral=True)
+        elif inter.component.custom_id == "role_select":
+            selected_role_ids = [int(role_id) for role_id in inter.values] if inter.values else []
+
+            selected_roles = [inter.guild.get_role(role_id) for role_id in selected_role_ids]
+
+            # Check if the user already has roles from the select menu
+            user_roles = inter.author.roles
+            role_ids = [option.value for option in inter.component.options]
+            existing_roles = [role for role in user_roles if str(role.id) in role_ids]
+
+            # Determine roles to add and remove
+            roles_to_add = []
+            roles_to_remove = []
+
+            for role in selected_roles:
+                if role not in existing_roles:
+                    roles_to_add.append(role)
+
+            for role in existing_roles:
+                if role not in selected_roles:
+                    roles_to_remove.append(role)
+
+            # Add new roles
+            for role in roles_to_add:
+                if role:
+                    await inter.author.add_roles(role)
+
+            # Remove deselected roles
+            for role in roles_to_remove:
+                if role:
+                    await inter.author.remove_roles(role)
+
+            await inter.response.defer(ephemeral=True)            
+    
     def get_emoji_by_name(self, guild: disnake.Guild, emoji_name: str) -> Union[disnake.Emoji, disnake.PartialEmoji, None]:
         # Check custom emojis in the guild
         for emoji in guild.emojis:
@@ -141,6 +256,7 @@ class RoleAssignment(commands.Cog):
             return None
                 
     @commands.slash_command(guild_ids=[854698446996766730])
+    @rolehierarchy.check_permissions("Co Owner")
     async def create_embed(self, inter: disnake.ApplicationCommandInteraction, message_type: str, channel: disnake.TextChannel):
         await inter.response.defer(ephemeral=True)
         await self.create_embed_message(channel, message_type)
@@ -168,6 +284,8 @@ class RoleAssignment(commands.Cog):
             if role_id and emoji:
                 emojifetched: disnake.Emoji = None
                 emojifetched = self.get_emoji_by_name(guild, emoji)
+                if emojifetched.id is None:
+                    emojifetched = self.get_manual_emoji(emoji)
                 if emojifetched and str(emojifetched) == str(payload.emoji):
                     role = guild.get_role(role_id)
                     if role:
@@ -196,6 +314,8 @@ class RoleAssignment(commands.Cog):
             if role_id and emoji:
                 emojifetched: disnake.Emoji = None
                 emojifetched = self.get_emoji_by_name(guild, emoji)
+                if emojifetched.id is None:
+                    emojifetched = self.get_manual_emoji(emoji)
                 if emojifetched and str(emojifetched) == str(payload.emoji):
                     role = guild.get_role(role_id)
                     if role:

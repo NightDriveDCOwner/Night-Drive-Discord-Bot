@@ -91,7 +91,7 @@ class Level(commands.Cog):
             current_date = self.globalfile.get_current_time().strftime('%Y-%m-%d')
             for guild in self.bot.guilds:
                 for member in guild.members:
-                    if member.voice and member.voice.channel:
+                    if member.voice and member.voice.channel and member.voice.afk == False and member.voice.self_mute == False:
                         self.cursor.execute("SELECT ID FROM USER WHERE DISCORDID = ?", (member.id,))
                         user_record = self.cursor.fetchone()
                         if user_record:
@@ -112,11 +112,20 @@ class Level(commands.Cog):
     async def on_message(self, message: disnake.Message):
         if message.author.bot:
             return
-        
+
         userrecord = self.globalfile.get_user_record(discordid=message.author.id)
+        if not userrecord:
+            self.logger.warning(f"User record not found for {message.author.id}")
+            return
+
         current_datetime = self.globalfile.get_current_time().strftime('%Y-%m-%d %H:%M:%S')
-        image_paths = [attachment.url for attachment in message.attachments]
-        
+        image_paths = []
+
+        for attachment in message.attachments:
+            image_path = await self.globalfile.save_image(attachment, f"{message.author.id}")
+            if image_path:
+                image_paths.append(image_path)
+
         if image_paths:
             # Ensure IMAGEPATH columns exist
             for i in range(1, len(image_paths) + 1):
@@ -132,7 +141,7 @@ class Level(commands.Cog):
         else:
             image_path_fields = ""
             image_path_values = ""
-        
+
         query = f"INSERT INTO MESSAGE (CONTENT, USERID, CHANNELID, MESSAGEID, INSERT_DATE {image_path_fields}) VALUES (?, ?, ?, ?, ?{image_path_values})"
         self.cursor.execute(query, (message.content, userrecord["ID"], message.channel.id, message.id, current_datetime, *image_paths))
         self.db.connection.commit()
@@ -337,7 +346,7 @@ class Level(commands.Cog):
             cursor.execute("UPDATE EXPERIENCE SET VOICE = ? WHERE USERID = ?", (total_voice_xp * self.message_worth_per_voicemin * self.factor, user_id))
         self.db.connection.commit()
 
-        await inter.edit_original_response(content="EXPERIENCE Werte wurden erfolgreich neu berechnet.")
+        await inter.edit_original_response(content="EXPERIENCE Werte wurden erfolgreich neu berechnet. Bitte als nächstes update_levels ausführen.")
         
     @commands.Cog.listener()
     async def on_interaction(self, interaction: disnake.Interaction):
@@ -509,7 +518,7 @@ class Level(commands.Cog):
             cursor.execute("UPDATE EXPERIENCE SET LEVEL = ? WHERE USERID = ?", (new_level, user_id))
         self.db.connection.commit()
 
-        await inter.edit_original_response(content="Level aller Benutzer wurden erfolgreich aktualisiert.")
+        await inter.edit_original_response(content="Level aller Benutzer wurden erfolgreich aktualisiert. Bitte als nächstes update_all_users_roles ausführen.")
         
     @commands.slash_command(guild_ids=[854698446996766730])
     @rolehierarchy.check_permissions("Administrator")
@@ -518,5 +527,22 @@ class Level(commands.Cog):
         await self.send_level_up_message(user, level)
         await inter.response.send_message(f"Level-Up Nachricht für {user.mention} wurde gesendet.", ephemeral=True)        
     
+    @commands.slash_command(guild_ids=[854698446996766730])
+    @rolehierarchy.check_permissions("Administrator")
+    async def add_xp_to_levels(self, inter: disnake.ApplicationCommandInteraction, addxp: int):
+        """Fügt jedem Level XP hinzu, berechnet die Level neu und vergibt die Rollen neu."""
+        await inter.response.defer()
+        cursor = self.db.connection.cursor()
+
+        cursor.execute("SELECT LEVELNAME, XP FROM LEVELXP")
+        levelxp_data = cursor.fetchall()
+
+        for levelname, xp in levelxp_data:
+            additional_xp = levelname * addxp
+            new_xp = int(xp) + additional_xp
+            cursor.execute("UPDATE LEVELXP SET XP = ? WHERE LEVELNAME = ?", (str(new_xp), levelname))
+        self.db.connection.commit()
+
+        await inter.edit_original_response(content="XP wurden hinzugefügt, Level neu berechnet und Rollen neu vergeben. (Bitte als nächstes recalculate_experience ausführen.)")    
 def setupLevel(bot):
     bot.add_cog(Level(bot))

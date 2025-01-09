@@ -239,7 +239,7 @@ class MyCommands(commands.Cog):
         # Suche nach dem Ticket-Channel
         ticket_channel = None
         for channel in inter.guild.text_channels:
-            if "ticket" in channel.name.lower and str(ticket_id) in channel.name:
+            if "ticket" in channel.name.lower() and str(ticket_id) in channel.name:
                 ticket_channel = channel
                 break
 
@@ -257,7 +257,7 @@ class MyCommands(commands.Cog):
             await ticket_channel.set_permissions(user, overwrite=overwrite)
             await inter.edit_original_response(f"{user.mention} wurde zum Ticket-Channel hinzugefügt.")
         except Exception as e:
-            await inter.edit_original_response(f"Fehler beim Hinzufügen des Benutzers: {e}") 
+            await inter.edit_original_response(f"Fehler beim Hinzufügen des Benutzers: {e}")
 
     @commands.slash_command(guild_ids=[854698446996766730])
     @rolehierarchy.check_permissions("Test-Supporter")

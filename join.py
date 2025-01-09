@@ -17,6 +17,7 @@ class Join(commands.Cog):
         self.globalfile = Globalfile(bot)
         self.db = DatabaseConnection()
         self.invites_before_join = {}
+        self.stats_channels = {}
         
         if not self.logger.handlers:
             formatter = logging.Formatter('[%(asctime)s - %(name)s - %(levelname)s]: %(message)s')
@@ -29,7 +30,8 @@ class Join(commands.Cog):
         self.invites_before_join = await self.get_guild_invites()
         self.bot.add_view(self.create_copy_mention_view()) 
         await self.bot.change_presence(activity=disnake.Activity(type=disnake.ActivityType.watching, name="über die Spieler"))      
-        self.bot.reload
+        await self.create_stats_category()
+        await self.update_stats()
 
     async def get_guild_invites(self):
         invites = {}
@@ -221,6 +223,59 @@ class Join(commands.Cog):
             except disnake.HTTPException as e:
                 self.logger.error(f"Ein Fehler ist aufgetreten: {e}")  
                 
+    @commands.Cog.listener()
+    async def on_member_join(self, member: disnake.Member):
+        await self.update_stats()
+
+    @commands.Cog.listener()
+    async def on_member_remove(self, member: disnake.Member):
+        await self.update_stats()
+
+    @commands.Cog.listener()
+    async def on_guild_update(self, before: disnake.Guild, after: disnake.Guild):
+        await self.update_stats()
+
+    async def create_stats_category(self):
+        for guild in self.bot.guilds:
+            category = disnake.utils.get(guild.categories, name="⏤ Serverstatistiken")
+            if not category:
+                category = await guild.create_category("⏤ Serverstatistiken")
+
+            # Verschiebe die Kategorie an die oberste Position
+            await category.edit(position=0)
+
+            channels = {
+                "Mitglieder": None,
+                "Bots": None,
+                "Boosts": None
+            }
+
+            for channel_name in channels.keys():
+                channel = next((ch for ch in guild.channels if ch.name.startswith(channel_name)), None)
+                if not channel:
+                    channel = await guild.create_voice_channel(channel_name, category=category)
+                channels[channel_name] = channel
+
+                # Überprüfen und Berechtigungen anpassen
+                everyone_role = guild.default_role
+                overwrites = channel.overwrites_for(everyone_role)
+                if overwrites.connect is not False:
+                    overwrites.connect = False
+                    await channel.set_permissions(everyone_role, overwrite=overwrites)
+
+            self.stats_channels[guild.id] = channels
+
+    async def update_stats(self):
+        for guild in self.bot.guilds:
+            if guild.id in self.stats_channels:
+                member_count = sum(1 for member in guild.members if not member.bot)
+                bot_count = sum(1 for member in guild.members if member.bot)
+                boost_count = guild.premium_subscription_count
+
+                await self.stats_channels[guild.id]["Mitglieder"].edit(name=f"Mitglieder: {member_count}")
+                await self.stats_channels[guild.id]["Bots"].edit(name=f"Bots: {bot_count}")
+                await self.stats_channels[guild.id]["Boosts"].edit(name=f"Boosts: {boost_count}")        
+                
 class CopyMentionButton(disnake.ui.Button):                
     def __init__(self):
         super().__init__(label="Erwähnung kopieren", style=disnake.ButtonStyle.primary, custom_id="copy_mention_button")
@@ -232,7 +287,6 @@ class CopyMentionButton(disnake.ui.Button):
         mention = f"<@{user_id}>"
         pyperclip.copy(mention)
         await interaction.response.send_message(f"`{mention}` wurde in die Zwischenablage kopiert!", ephemeral=True)                         
-
 
 def setupJoin(bot):
     bot.add_cog(Join(bot))
