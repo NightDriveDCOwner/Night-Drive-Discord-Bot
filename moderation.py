@@ -6,6 +6,8 @@ from dbconnection import DatabaseConnection
 from rolehierarchy import rolehierarchy
 import sqlite3
 from datetime import datetime, timedelta, timedelta, date, timezone
+import asyncio
+
 
 
 class Moderation(commands.Cog):
@@ -34,8 +36,7 @@ class Moderation(commands.Cog):
                 IMAGEPATH TEXT
             )
         """)
-        self.db.connection.commit()
-               
+        self.db.connection.commit()               
 
     def add_user_to_badwords_times(user_id: int):
         expiry_time = time.time() + 24 * 60 * 60 # 24 Stunden ab jetzt
@@ -78,10 +79,10 @@ class Moderation(commands.Cog):
         cursor = self.db.connection.cursor()
 
         # Lade die Badwords aus der Datenbank
-        cursor.execute("SELECT word FROM Badword")
+        cursor.execute("SELECT word FROM Blacklist")
         badwords = [row[0].lower() for row in cursor.fetchall()]
 
-        if any(badword in (' ' + message.content.lower() + ' ') for badword in badwords):
+        if any(blacklist in (' ' + message.content.lower() + ' ') for blacklist in badwords):
             # Hole die Benutzer-ID aus der Tabelle User
             user_record_id = Globalfile.get_user_record_id(username=message.author.name, user_id=message.author.id)
             if not user_record_id:
@@ -100,7 +101,7 @@ class Moderation(commands.Cog):
             self.db.connection.commit()
 
             notification_channel_id = 854698447113027594  # Ersetzen Sie dies durch die tatsächliche ID Ihres Kanals
-            embed = disnake.Embed(title="Badword Verstoß", description="Ein Benutzer hat ein Badword verwendet.", color=0xff0000)
+            embed = disnake.Embed(title="Blacklist Verstoß", description="Ein Benutzer hat ein Blacklist verwendet.", color=0xff0000)
             # Fügen Sie Felder hinzu, um die Informationen zu speichern
             notification_channel = self.bot.get_channel(notification_channel_id)
             if notification_channel:
@@ -123,7 +124,7 @@ class Moderation(commands.Cog):
 
     @commands.Cog.listener()
     async def on_button_click(self, interaction: disnake.MessageInteraction):
-        embed = disnake.Embed(title="Badword Verstoß", description="Ein Benutzer hat ein Badword verwendet.", color=0xff0000)
+        embed = disnake.Embed(title="Blacklist Verstoß", description="Ein Benutzer hat ein Blacklist verwendet.", color=0xff0000)
         if interaction.component.custom_id == "allow_message":
             # Logik zum Erlauben der Nachricht        
             await interaction.message.delete()
@@ -333,7 +334,7 @@ class Moderation(commands.Cog):
             self.db.connection.commit()
 
             # Lösche die Warnung
-            cursor.execute("DELETE FROM WARN WHERE ID = ?", (caseid,))
+            cursor.execute("UPDATE WARN SET deleted = 1 WHERE ID = ?", (caseid,))
             self.db.connection.commit()
 
             embed = disnake.Embed(title="Warn gelöscht", description=f"Warn mit der ID {caseid} wurde gelöscht und das Warnlevel wurde angepasst.", color=disnake.Color.green())
@@ -343,70 +344,45 @@ class Moderation(commands.Cog):
             embed = disnake.Embed(title="Fehler", description=f"Ein Fehler ist aufgetreten: {e}", color=disnake.Color.red())
             await inter.edit_original_response(embed=embed)
             self.logger.critical(f"An error occurred: {e}")
-                       
+
     @commands.slash_command(guild_ids=[854698446996766730])
-    @rolehierarchy.check_permissions("Supporter")
+    @rolehierarchy.check_permissions("Supporter")                   
     async def ban(self, 
-                  inter: disnake.ApplicationCommandInteraction, 
-                  member: disnake.Member = commands.Param(name="benutzer", description="Der Benutzer, der gebannt werden soll."), 
-                  reason: str = commands.Param(name="begründung", description="Grund warum der Benutzer gebannt werden soll", default="Kein Grund angegeben"),
-                  duration: str = commands.Param(name="dauer", description="Dauer des Bans in Sek., Min., Std., Tagen oder Jahre.(Bsp.: 0s0m0h0d0j) Nichts angegeben = Dauerhaft", default="0s"),
-                  delete_days: int = commands.Param(name="geloeschte_nachrichten", description="Anzahl der Tage, für die Nachrichten des Benutzers gelöscht werden sollen. (0-7, Default = 0)", default=0),
-                  proof: disnake.Attachment = commands.Param(name="beweis", description="Ein Bild als Beweis für den Ban und zur Dokumentation", default=None)):
+                inter: disnake.ApplicationCommandInteraction, 
+                member: disnake.Member = commands.Param(name="benutzer", description="Der Benutzer, der gebannt werden soll."), 
+                reason: str = commands.Param(name="begründung", description="Grund warum der Benutzer gebannt werden soll", default="Kein Grund angegeben"),
+                duration: str = commands.Param(name="dauer", description="Dauer des Bans in Sek., Min., Std., Tagen oder Jahre.(Bsp.: 0s0m0h0d0j) Nichts angegeben = Dauerhaft", default="0s"),
+                delete_days: int = commands.Param(name="geloeschte_nachrichten", description="Anzahl der Tage, für die Nachrichten des Benutzers gelöscht werden sollen. (0-7, Default = 0)", default=0),
+                proof: disnake.Attachment = commands.Param(name="beweis", description="Ein Bild als Beweis für den Ban und zur Dokumentation", default=None)):
         """Banne einen Benutzer und speichere ein Bild als Beweis."""
         await inter.response.defer()  # Verzögere die Interaktion
         image_path = ""
-        # Berechnen der Banndauer
-        if duration != "0s":
-            duration_seconds = self.globalfile.convert_duration_to_seconds(duration)
-            ban_end_time = self.globalfile.get_current_time() + timedelta(seconds=duration_seconds)
-            ban_end_timestamp = int(ban_end_time.timestamp())
-            ban_end_formatted = ban_end_time.strftime('%Y-%m-%d %H:%M:%S')
-        else:
-            duration_seconds = self.globalfile.convert_duration_to_seconds(duration)
-            ban_end_timestamp = None
-            ban_end_formatted = "Unbestimmt"
+        try:
+            # Berechnen der Banndauer
+            if duration != "0s":
+                duration_seconds = self.globalfile.convert_duration_to_seconds(duration)
+                ban_end_time = self.globalfile.get_current_time() + timedelta(seconds=duration_seconds)
+                ban_end_timestamp = int(ban_end_time.timestamp())
+                ban_end_formatted = ban_end_time.strftime('%Y-%m-%d %H:%M:%S')
+            else:
+                duration_seconds = self.globalfile.convert_duration_to_seconds(duration)
+                ban_end_timestamp = None
+                ban_end_formatted = "Unbestimmt"
 
-        userrecord = self.globalfile.get_user_record(discordid=member.id)
+            userrecord = self.globalfile.get_user_record(discordid=member.id)
 
-        cursor = self.db.connection.cursor()
-        cursor.execute("SELECT * FROM BAN WHERE USERID = ?", (userrecord['ID'],))
-        bans = cursor.fetchall()
-        
-        ban_found = False
-        for ban in bans:
-            if not ban[6] == 1:  # Assuming 'Unban' is a column in your BANS table
-                ban_found = True
+            cursor = self.db.connection.cursor()
+            cursor.execute("SELECT * FROM BAN WHERE USERID = ?", (userrecord['ID'],))
+            bans = cursor.fetchall()
+            
+            ban_found = False
+            for ban in bans:
+                if not ban[6] == 1:  # Assuming 'Unban' is a column in your BANS table
+                    ban_found = True
 
-        if not ban_found:
-            try:
-                await member.ban(reason=reason, delete_message_days=delete_days)
-                ban_successful = True
-            except disnake.Forbidden:
-                ban_successful = False
-                await inter.edit_original_response(content=f"Ich habe keine Berechtigung, {member.mention} zu bannen.")
-            except disnake.HTTPException as e:
-                ban_successful = False
-                await inter.edit_original_response(content=f"Ein Fehler ist aufgetreten: {e}")
-
-            if ban_successful:
-                if proof:
-                    if duration_seconds is None:
-                        image_path = await self.globalfile.save_image(proof, f"{member.id}_infinitely")
-                    else:
-                        image_path = await self.globalfile.save_image(proof, f"{member.id}_{duration_seconds}")
-                
-
-                cursor.execute(
-                    "INSERT INTO BAN (USERID, REASON, BANNEDTO, DELETED_DAYS, IMAGEPATH) VALUES (?, ?, ?, ?, ?)",
-                    (userrecord['ID'], reason, ban_end_timestamp, str(delete_days), image_path)
-                )
-                self.db.connection.commit()        
-                
-                embed = disnake.Embed(title="Benutzer gebannt", description=f"{member.mention} wurde erfolgreich gebannt!", color=disnake.Color.red())
-                avatar_url = member.avatar.url if member.avatar else member.default_avatar.url
-                embed.set_author(name=member.name, icon_url=avatar_url)
-                embed.set_footer(text=f"User ID: {member.id} | {userrecord['ID']}")
+            if not ban_found:
+                # Sende dem Benutzer ein Embed mit den Bann-Details
+                embed = disnake.Embed(title="Du wurdest gebannt", description="Du wurdest von diesem Server gebannt.", color=disnake.Color.red())
                 embed.add_field(name="Grund", value=reason, inline=False)
                 embed.add_field(name="Dauer", value=duration, inline=True)
                 embed.add_field(name="Ende des Banns", value=ban_end_formatted, inline=True)
@@ -414,10 +390,59 @@ class Moderation(commands.Cog):
                 if proof:
                     embed.set_image(url=proof.url)  # Setze das Bild des Beweises, falls vorhanden
 
-                await inter.edit_original_response(embed=embed)
-        else:
-            await inter.edit_original_response(content=f"{member.mention} ist bereits gebannt! Ban nicht möglich.")
-            self.logger.info(f"User {member.id} ban not possible. User is already banned.")
+                try:
+                    await member.send(embed=embed)
+                except disnake.Forbidden:
+                    self.logger.warning(f"Could not send ban details to {member.id}. User has DMs disabled.")
+
+                try:
+                    asyncio.create_task(self.delete_messages_background(inter.guild, member, delete_days))
+                    await member.ban(reason=reason)
+                    ban_successful = True
+                except disnake.Forbidden:
+                    ban_successful = False
+                    await inter.edit_original_response(content=f"Ich habe keine Berechtigung, {member.mention} zu bannen.")
+                except disnake.HTTPException as e:
+                    ban_successful = False
+                    await inter.edit_original_response(content=f"Ein Fehler ist aufgetreten: {e}")
+
+                if ban_successful:
+                    if proof:
+                        if duration_seconds is None:
+                            image_path = await self.globalfile.save_image(proof, f"{member.id}_infinitely")
+                        else:
+                            image_path = await self.globalfile.save_image(proof, f"{member.id}_{duration_seconds}")
+                    
+                    userrecord = self.globalfile.get_user_record(discordid=inter.user.id)
+                    user_id = userrecord['ID']
+                    userrecord = self.globalfile.get_user_record(discordid=member.id)
+                    current_datetime = self.globalfile.get_current_time().strftime('%Y-%m-%d %H:%M:%S')
+                    cursor.execute(
+                        "INSERT INTO BAN (USERID, REASON, BANNEDTO, DELETED_DAYS, IMAGEPATH, INSERTEDDATE, BANNEDBY) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        (userrecord['ID'], reason, ban_end_timestamp, str(delete_days), image_path, current_datetime, user_id)
+                    )
+                    self.db.connection.commit()        
+                    
+                    embed = disnake.Embed(title="Benutzer gebannt", description=f"{member.mention} wurde erfolgreich gebannt!", color=disnake.Color.red())
+                    avatar_url = member.avatar.url if member.avatar else member.default_avatar.url
+                    embed.set_author(name=member.name, icon_url=avatar_url)
+                    embed.set_footer(text=f"User ID: {member.id} | {userrecord['ID']}")
+                    embed.add_field(name="Grund", value=reason, inline=False)
+                    embed.add_field(name="Dauer", value=duration, inline=True)
+                    embed.add_field(name="Ende des Banns", value=ban_end_formatted, inline=True)
+                    embed.add_field(name="Gelöschte Nachrichten (Tage)", value=str(delete_days), inline=True)
+                    embed.add_field(name="Erstellt am", value=current_datetime, inline=True)
+                    embed.add_field(name="Gebannt von", value=inter.user.name, inline=True)
+                    if proof:
+                        embed.set_image(url=proof.url)  # Setze das Bild des Beweises, falls vorhanden
+
+                    await inter.edit_original_response(embed=embed)
+            else:
+                await inter.edit_original_response(content=f"{member.mention} ist bereits gebannt! Ban nicht möglich.")
+                self.logger.info(f"User {member.id} ban not possible. User is already banned.")
+        except disnake.ext.commands.errors.MemberNotFound:
+            await inter.edit_original_response(content="Der angegebene Benutzer wurde nicht gefunden.")
+            self.logger.error(f"MemberNotFound: Der Benutzer mit der ID {member.id} wurde nicht gefunden.")
 
     @commands.slash_command(guild_ids=[854698446996766730])
     @rolehierarchy.check_permissions("Senior Supporter")
@@ -461,57 +486,6 @@ class Moderation(commands.Cog):
             self.logger.critical(f"An error occurred: {e}")
             await inter.edit_original_response(content=f"Ein Fehler ist aufgetreten: {e}")            
 
-    @commands.slash_command(guild_ids=[854698446996766730])
-    @rolehierarchy.check_permissions("Administrator")
-    async def kick_users_underage(self, inter: disnake.ApplicationCommandInteraction):
-        """Kicke alle Benutzer mit zwei bestimmten Rollen und sende ihnen eine Nachricht."""
-        await inter.response.defer()
-        guild = inter.guild
-
-        # Definiere die Rollen-IDs
-        role1_id = 1300559732905607269  # Ersetze dies durch die tatsächliche ID der ersten Rolle
-        role2_id = 987654321098765432  # Ersetze dies durch die tatsächliche ID der zweiten Rolle
-
-        role1 = guild.get_role(role1_id)
-        role2 = guild.get_role(role2_id)
-        members_to_kick1 = [member for member in guild.members if role1 in member.roles]
-        members_to_kick2 =[member for member in guild.members if role2 in member.roles]
-        embed = disnake.Embed(
-            title="Server-Umstellung auf 18+",
-            description=(
-                "Aufgrund der Umstellung des Servers auf einen Dating-Server für 18+ müssen wir uns leider von dir verabschieden. Vielen Dank, dass du Teil unseres Projektes warst."
-                "Ich, Tatzu, der Owner des Servers entschuldige mich für diese Schritt."
-                ),
-            color=disnake.Color.dark_blue()
-        )
-        embed.set_footer(text="Wir wünschen dir alles Gute!")
-        embed.set_author(name=inter.guild.name, icon_url=guild.icon.url)
-
-        for member in members_to_kick1:
-            try:
-                try:
-                    await member.send(embed=embed)
-                except Exception as e:
-                    self.logger.error(f"Fehler beim Senden der Nachricht an {member.name} (ID: {member.id}): {e}")
-                await member.kick(reason="Server-Umstellung auf 18+")
-                self.logger.info(f"User {member.name} (ID: {member.id}) wurde gekickt.")
-            except Exception as e:
-                self.logger.error(f"Fehler beim Kicken von {member.name} (ID: {member.id}): {e}")
-                
-        for member in members_to_kick2:
-            try:
-                try:
-                    await member.send(embed=embed)
-                except Exception as e:
-                    self.logger.error(f"Fehler beim Senden der Nachricht an {member.name} (ID: {member.id}): {e}")
-                await member.kick(reason="Server-Umstellung auf 18+")
-                self.logger.info(f"User {member.name} (ID: {member.id}) wurde gekickt.")
-            except Exception as e:
-                self.logger.error(f"Fehler beim Kicken von {member.name} (ID: {member.id}): {e}")                
-
-        await inter.edit_original_response(content=f"{len(members_to_kick1)+len(members_to_kick2)} Benutzer wurden gekickt.")
-        self.logger.info(f"{len(members_to_kick1)+len(members_to_kick2)} Benutzer wurden gekickt.")
- 
     @commands.slash_command(guild_ids=[854698446996766730])
     @rolehierarchy.check_permissions("Supporter")
     async def kick(self, 
@@ -579,10 +553,25 @@ class Moderation(commands.Cog):
             except disnake.HTTPException as e:
                 await inter.edit_original_response(content=f"Ein Fehler ist aufgetreten: {e}")
                 return
+            except disnake.errors.NotFound:
+                # Nachricht existiert nicht mehr, einfach überspringen
+                continue
 
-        await inter.edit_original_response(content=f"{deleted_messages} Nachrichten wurden gelöscht.")    
-    
+        await inter.edit_original_response(content=f"{deleted_messages} Nachrichten wurden gelöscht.")
 
-       
+    async def delete_messages_background(self, guild: disnake.Guild, member: disnake.Member, days: int):
+        """Löscht Nachrichten eines bestimmten Mitglieds aus allen Kanälen, die innerhalb der angegebenen Anzahl von Tagen geschrieben wurden."""
+        delete_after = datetime.utcnow() - timedelta(days=days)
+        
+        for channel in guild.text_channels:
+            async for message in channel.history(limit=None, after=delete_after):
+                if message.author == member:
+                    try:
+                        await message.delete()
+                    except disnake.Forbidden:
+                        print(f"Keine Berechtigung zum Löschen von Nachrichten in {channel.name}")
+                    except disnake.HTTPException as e:
+                        print(f"Fehler beim Löschen von Nachrichten in {channel.name}: {e}")
+
 def setupModeration(bot: commands.Bot):
     bot.add_cog(Moderation(bot))                

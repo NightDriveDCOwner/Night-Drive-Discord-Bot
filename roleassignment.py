@@ -8,6 +8,8 @@ import os
 from typing import Union
 import emoji
 from rolehierarchy import rolehierarchy
+from disnake.ui import Button, View
+from globalfile import Globalfile
 
 class RoleAssignment(commands.Cog):
     def __init__(self, bot):
@@ -17,6 +19,7 @@ class RoleAssignment(commands.Cog):
         self.logger.setLevel(logging_level)
         self.db = sqlite3.connect('nightdrive')
         self.cursor = self.db.cursor()
+        self.globalfile = Globalfile(bot)  
 
         if not self.logger.handlers:
             formatter = logging.Formatter('[%(asctime)s - %(name)s - %(levelname)s]: %(message)s')
@@ -64,7 +67,7 @@ class RoleAssignment(commands.Cog):
 
     @commands.Cog.listener()
     async def on_ready(self):
-        self.logger.info("RoleAssignment Cog is ready.")
+        self.logger.debug("RoleAssignment is ready.")
 
     async def create_embed_message(self, channel: disnake.TextChannel, message_type: str):
         self.cursor.execute("SELECT * FROM UNIQUE_MESSAGE WHERE MESSAGETYPE = ?", (message_type,))
@@ -85,12 +88,14 @@ class RoleAssignment(commands.Cog):
                 if role:
                     roles_found = True
                     emojifetched: disnake.Emoji = None
-                    emojifetched = self.get_manual_emoji(emoji)
-                    if emojifetched != "" and emojifetched is not None:
+                    emojifetched = self.globalfile.get_manual_emoji(emoji)
+                    if emojifetched != "" and emojifetched is not None and message_type != "COLOR":
                         description += f"{emojifetched} = {role.name}\n"
+                    elif emojifetched != "" and emojifetched is not None and message_type == "COLOR":
+                        description += f"{emojifetched} = <@&{role.id}>\n"
                     else:
-                        try:
-                            emojifetched = self.get_emoji_by_name(channel.guild, emoji)
+                        try:                               
+                            emojifetched = self.globalfile.get_emoji_by_name(emoji)
                             if hasattr(emojifetched, 'id') and emojifetched.id is not None:
                                 description += f"<:{emojifetched.name}:{emojifetched.id}> = {role.name}\n"
                             elif hasattr(emojifetched, 'name') and emojifetched.name is not None and message_type == "COLOR":
@@ -98,7 +103,7 @@ class RoleAssignment(commands.Cog):
                         except Exception as e:
                             self.logger.error(f"Error adding role ({emoji}) to description: {e}")
                     options.append(SelectOption(label=role.name, value=str(role_id), emoji=emojifetched))
-        
+    
         embed = disnake.Embed(
             title=result[3],  # Assuming TITLE is the first column
             description=f"{description}",
@@ -153,9 +158,15 @@ class RoleAssignment(commands.Cog):
             color=0x00008B
         )
         if result[5] != "" and result[5] is not None:
-            embed.set_footer(text=result[5])  # Assuming FOOTER is the fifth column
+            embed.set_footer(text=result[5])  # Assuming FOOTER is the fifth column    
 
-        await channel.send(embed=embed)
+        message = await channel.send(embed=embed)
+        
+        if message_type == "NSFWRULES9":
+            role_button = Button(label="Regeln akzeptieren", style=disnake.ButtonStyle.green, custom_id="toggle_nsfwrule_button")
+            view = View()            
+            view.add_item(role_button)
+            await message.edit(view=view)
 
     @commands.slash_command(guild_ids=[854698446996766730])
     @rolehierarchy.check_permissions("Co Owner")    
@@ -168,15 +179,28 @@ class RoleAssignment(commands.Cog):
         
         await inter.edit_original_response(content="All rule embeds have been created.")        
 
+    @commands.slash_command(guild_ids=[854698446996766730])
+    @rolehierarchy.check_permissions("Co Owner")    
+    async def create_nsfwrules_embeds(self, inter: disnake.ApplicationCommandInteraction, channel: disnake.TextChannel):
+        await inter.response.defer()
+        message_types = [f"NSFWRULES{i}" for i in range(1, 10)]
+        
+        for message_type in message_types:
+            await self.create_embed_wo_reaction(message_type, channel)
+        
+        await inter.edit_original_response(content="All nsfwrule embeds have been created.")    
+
 
     @commands.Cog.listener()
     async def on_dropdown(self, inter: disnake.MessageInteraction):
+        await inter.response.defer()
         if inter.component.custom_id == "role_select_one":
             selected_role_ids = [int(role_id) for role_id in inter.values] if inter.values else []
 
             # Check if more than one role is selected
             if len(selected_role_ids) > 1:
-                await inter.response.send_message("Bitte wähle bei dieser Kategorie nur eine Rolle aus.", ephemeral=True)
+                if not inter.response.is_done():
+                    await inter.response.send_message("Bitte wähle bei dieser Kategorie nur eine Rolle aus.", ephemeral=True)
                 return
 
             selected_roles = [inter.guild.get_role(role_id) for role_id in selected_role_ids]
@@ -208,7 +232,6 @@ class RoleAssignment(commands.Cog):
                 if role:
                     await inter.author.remove_roles(role)
 
-            await inter.response.defer(ephemeral=True)
         elif inter.component.custom_id == "role_select":
             selected_role_ids = [int(role_id) for role_id in inter.values] if inter.values else []
 
@@ -240,20 +263,26 @@ class RoleAssignment(commands.Cog):
             for role in roles_to_remove:
                 if role:
                     await inter.author.remove_roles(role)
+        
+    @commands.Cog.listener()
+    async def on_interaction(self, interaction: disnake.Interaction):
+        if interaction.type == disnake.InteractionType.component:
+            custom_id = interaction.data.get("custom_id")            
+            if custom_id == "toggle_nsfwrule_button":
+                interaction.response.defer()
+                await self.nsfwrules_button_callback(interaction)        
 
-            await inter.response.defer(ephemeral=True)            
-    
-    def get_emoji_by_name(self, guild: disnake.Guild, emoji_name: str) -> Union[disnake.Emoji, disnake.PartialEmoji, None]:
-        # Check custom emojis in the guild
-        for emoji in guild.emojis:
-            if emoji.name == emoji_name:
-                return emoji
-
-        # Check general Discord emojis
-        try:
-            return disnake.PartialEmoji(name=emoji_name)
-        except ValueError:
-            return None
+    async def nsfwrules_button_callback(self, interaction: disnake.Interaction):
+        role_id = 1165704468449468547  # Ersetze dies durch die ID der Rolle, die du zuweisen/entfernen möchtest
+        role = interaction.guild.get_role(role_id)
+        
+        if role in interaction.user.roles:
+            await interaction.user.remove_roles(role)
+            await interaction.response.send_message("Die Rolle wurde entfernt und du hast die Regeln akzeptiert.", ephemeral=True)
+        else:
+            await interaction.user.add_roles(role)
+            await interaction.response.send_message("Die Rolle wurde hinzugefügt.", ephemeral=True)
+                     
                 
     @commands.slash_command(guild_ids=[854698446996766730])
     @rolehierarchy.check_permissions("Co Owner")
@@ -283,9 +312,9 @@ class RoleAssignment(commands.Cog):
             emoji = result[8 + (i - 1) * 2]
             if role_id and emoji:
                 emojifetched: disnake.Emoji = None
-                emojifetched = self.get_emoji_by_name(guild, emoji)
+                emojifetched = self.globalfile.get_emoji_by_name(emoji)
                 if emojifetched.id is None:
-                    emojifetched = self.get_manual_emoji(emoji)
+                    emojifetched = self.globalfile.get_manual_emoji(emoji)
                 if emojifetched and str(emojifetched) == str(payload.emoji):
                     role = guild.get_role(role_id)
                     if role:
@@ -313,9 +342,9 @@ class RoleAssignment(commands.Cog):
             emoji = result[8 + (i - 1) * 2]
             if role_id and emoji:
                 emojifetched: disnake.Emoji = None
-                emojifetched = self.get_emoji_by_name(guild, emoji)
+                emojifetched = self.globalfile.get_emoji_by_name(emoji)
                 if emojifetched.id is None:
-                    emojifetched = self.get_manual_emoji(emoji)
+                    emojifetched = self.globalfile.get_manual_emoji(emoji)
                 if emojifetched and str(emojifetched) == str(payload.emoji):
                     role = guild.get_role(role_id)
                     if role:
@@ -323,501 +352,6 @@ class RoleAssignment(commands.Cog):
                         member: disnake.Member = guild.get_member(payload.user_id)
                         self.logger.info(f"Removed role {role.name} from {member.name} for removing reaction {emoji}")
                         break                    
-
-    def get_manual_emoji(self, emoji_name: str) -> disnake.Emoji:
-        emoji_dict = {
-            "keycap_ten": "🔟",
-            "capital_abcd": "🔠",
-            "newspaper": "📰",
-            "sparkler": "🎇",
-            "sparkles": "✨",
-            "microphone2": "🎙️",
-            "night_with_stars": "🌃",
-            "bell": "🔔",
-            "no_bell": "🔕",
-            "question": "❓",
-            "zero": "0️⃣",
-            "one": "1️⃣",
-            "two": "2️⃣",
-            "three": "3️⃣",
-            "four": "4️⃣",
-            "five": "5️⃣",
-            "six": "6️⃣",
-            "seven": "7️⃣",
-            "eight": "8️⃣",
-            "nine": "9️⃣",
-            "ten": "🔟",
-            "circle": "⚪",
-            "blue_circle": "🔵",
-            "red_circle": "🔴",
-            "black_circle": "⚫",
-            "white_circle": "⚪",
-            "purple_circle": "🟣",
-            "green_circle": "🟢",
-            "yellow_circle": "🟡",
-            "brown_circle": "🟤",
-            "orange_circle": "🟠",
-            "pink_circle": "🟣",
-            "large_blue_circle": "🔵",
-            "gun": "🔫",
-            "space_invader": "👾",
-            "crossed_swords": "⚔️",
-            "knife": "🔪",
-            "pick": "⛏️",
-            "smile": "😊",
-            "heart": "❤️",
-            "thumbs_up": "👍",
-            "fire": "🔥",
-            "star": "⭐",
-            "check_mark": "✔️",
-            "cross_mark": "❌",
-            "clap": "👏",
-            "wave": "👋",
-            "rocket": "🚀",
-            "sun": "☀️",
-            "moon": "🌙",
-            "cloud": "☁️",
-            "snowflake": "❄️",
-            "zap": "⚡",
-            "umbrella": "☔",
-            "coffee": "☕",
-            "soccer": "⚽",
-            "basketball": "🏀",
-            "football": "🏈",
-            "baseball": "⚾",
-            "tennis": "🎾",
-            "volleyball": "🏐",
-            "rugby": "🏉",
-            "golf": "⛳",
-            "trophy": "🏆",
-            "medal": "🏅",
-            "crown": "👑",
-            "gem": "💎",
-            "money_bag": "💰",
-            "dollar": "💵",
-            "yen": "💴",
-            "euro": "💶",
-            "pound": "💷",
-            "credit_card": "💳",
-            "shopping_cart": "🛒",
-            "gift": "🎁",
-            "balloon": "🎈",
-            "party_popper": "🎉",
-            "confetti_ball": "🎊",
-            "tada": "🎉",
-            "sparkles": "✨",
-            "boom": "💥",
-            "collision": "💥",
-            "dizzy": "💫",
-            "speech_balloon": "💬",
-            "thought_balloon": "💭",
-            "zzz": "💤",
-            "wave": "👋",
-            "raised_hand": "✋",
-            "ok_hand": "👌",
-            "victory_hand": "✌️",
-            "crossed_fingers": "🤞",
-            "love_you_gesture": "🤟",
-            "call_me_hand": "🤙",
-            "backhand_index_pointing_left": "👈",
-            "backhand_index_pointing_right": "👉",
-            "backhand_index_pointing_up": "👆",
-            "backhand_index_pointing_down": "👇",
-            "index_pointing_up": "☝️",
-            "raised_fist": "✊",
-            "oncoming_fist": "👊",
-            "left_facing_fist": "🤛",
-            "right_facing_fist": "🤜",
-            "clapping_hands": "👏",
-            "raising_hands": "🙌",
-            "open_hands": "👐",
-            "palms_up_together": "🤲",
-            "handshake": "🤝",
-            "folded_hands": "🙏",
-            "writing_hand": "✍️",
-            "nail_polish": "💅",
-            "selfie": "🤳",
-            "muscle": "💪",
-            "mechanical_arm": "🦾",
-            "mechanical_leg": "🦿",
-            "leg": "🦵",
-            "foot": "🦶",
-            "ear": "👂",
-            "ear_with_hearing_aid": "🦻",
-            "nose": "👃",
-            "brain": "🧠",
-            "anatomical_heart": "🫀",
-            "lungs": "🫁",
-            "tooth": "🦷",
-            "bone": "🦴",
-            "eyes": "👀",
-            "eye": "👁️",
-            "tongue": "👅",
-            "mouth": "👄",
-            "baby": "👶",
-            "child": "🧒",
-            "boy": "👦",
-            "girl": "👧",
-            "person": "🧑",
-            "man": "👨",
-            "woman": "👩",
-            "older_person": "🧓",
-            "old_man": "👴",
-            "old_woman": "👵",
-            "person_frowning": "🙍",
-            "person_pouting": "🙎",
-            "person_gesturing_no": "🙅",
-            "person_gesturing_ok": "🙆",
-            "person_tipping_hand": "💁",
-            "person_raising_hand": "🙋",
-            "deaf_person": "🧏",
-            "person_bowing": "🙇",
-            "person_facepalming": "🤦",
-            "person_shrugging": "🤷",
-            "health_worker": "🧑‍⚕️",
-            "student": "🧑‍🎓",
-            "teacher": "🧑‍🏫",
-            "judge": "🧑‍⚖️",
-            "farmer": "🧑‍🌾",
-            "cook": "🧑‍🍳",
-            "mechanic": "🧑‍🔧",
-            "factory_worker": "🧑‍🏭",
-            "office_worker": "🧑‍💼",
-            "scientist": "🧑‍🔬",
-            "technologist": "🧑‍💻",
-            "singer": "🧑‍🎤",
-            "artist": "🧑‍🎨",
-            "pilot": "🧑‍✈️",
-            "astronaut": "🧑‍🚀",
-            "firefighter": "🧑‍🚒",
-            "police_officer": "👮",
-            "detective": "🕵️",
-            "guard": "💂",
-            "ninja": "🥷",
-            "construction_worker": "👷",
-            "prince": "🤴",
-            "princess": "👸",
-            "person_wearing_turban": "👳",
-            "person_with_skullcap": "👲",
-            "woman_with_headscarf": "🧕",
-            "person_in_tuxedo": "🤵",
-            "person_with_veil": "👰",
-            "pregnant_woman": "🤰",
-            "breast_feeding": "🤱",
-            "woman_feeding_baby": "👩‍🍼",
-            "man_feeding_baby": "👨‍🍼",
-            "person_feeding_baby": "🧑‍🍼",
-            "angel": "👼",
-            "santa_claus": "🎅",
-            "mrs_claus": "🤶",
-            "mx_claus": "🧑‍🎄",
-            "superhero": "🦸",
-            "supervillain": "🦹",
-            "mage": "🧙",
-            "fairy": "🧚",
-            "vampire": "🧛",
-            "merperson": "🧜",
-            "elf": "🧝",
-            "genie": "🧞",
-            "zombie": "🧟",
-            "person_getting_massage": "💆",
-            "person_getting_haircut": "💇",
-            "person_walking": "🚶",
-            "person_standing": "🧍",
-            "person_kneeling": "🧎",
-            "person_with_probing_cane": "🧑‍🦯",
-            "person_in_motorized_wheelchair": "🧑‍🦼",
-            "person_in_manual_wheelchair": "🧑‍🦽",
-            "person_running": "🏃",
-            "woman_dancing": "💃",
-            "man_dancing": "🕺",
-            "person_in_suit_levitating": "🕴️",
-            "people_with_bunny_ears": "👯",
-            "person_in_steamy_room": "🧖",
-            "person_climbing": "🧗",
-            "person_fencing": "🤺",
-            "horse_racing": "🏇",
-            "skier": "⛷️",
-            "snowboarder": "🏂",
-            "person_golfing": "🏌️",
-            "person_surfing": "🏄",
-            "person_rowing_boat": "🚣",
-            "person_swimming": "🏊",
-            "person_bouncing_ball": "⛹️",
-            "person_lifting_weights": "🏋️",
-            "person_biking": "🚴",
-            "person_mountain_biking": "🚵",
-            "person_cartwheeling": "🤸",
-            "people_wrestling": "🤼",
-            "person_playing_water_polo": "🤽",
-            "person_playing_handball": "🤾",
-            "person_juggling": "🤹",
-            "person_in_lotus_position": "🧘",
-            "person_taking_bath": "🛀",
-            "person_in_bed": "🛌",
-            "people_holding_hands": "🧑‍🤝‍🧑",
-            "women_holding_hands": "👭",
-            "woman_and_man_holding_hands": "👫",
-            "men_holding_hands": "👬",
-            "kiss": "💏",
-            "couple_with_heart": "💑",
-            "family": "👪",
-            "speaking_head": "🗣️",
-            "bust_in_silhouette": "👤",
-            "busts_in_silhouette": "👥",
-            "footprints": "👣",
-            "monkey_face": "🐵",
-            "monkey": "🐒",
-            "gorilla": "🦍",
-            "orangutan": "🦧",
-            "dog_face": "🐶",
-            "dog": "🐕",
-            "guide_dog": "🦮",
-            "service_dog": "🐕‍🦺",
-            "poodle": "🐩",
-            "wolf": "🐺",
-            "fox": "🦊",
-            "raccoon": "🦝",
-            "cat_face": "🐱",
-            "cat": "🐈",
-            "black_cat": "🐈‍⬛",
-            "lion": "🦁",
-            "tiger_face": "🐯",
-            "tiger": "🐅",
-            "leopard": "🐆",
-            "horse_face": "🐴",
-            "horse": "🐎",
-            "unicorn": "🦄",
-            "zebra": "🦓",
-            "deer": "🦌",
-            "bison": "🦬",
-            "cow_face": "🐮",
-            "ox": "🐂",
-            "water_buffalo": "🐃",
-            "cow": "🐄",
-            "pig_face": "🐷",
-            "pig": "🐖",
-            "boar": "🐗",
-            "pig_nose": "🐽",
-            "ram": "🐏",
-            "ewe": "🐑",
-            "goat": "🐐",
-            "camel": "🐪",
-            "two_hump_camel": "🐫",
-            "llama": "🦙",
-            "giraffe": "🦒",
-            "elephant": "🐘",
-            "mammoth": "🦣",
-            "rhinoceros": "🦏",
-            "hippopotamus": "🦛",
-            "mouse_face": "🐭",
-            "mouse": "🐁",
-            "rat": "🐀",
-            "hamster": "🐹",
-            "rabbit_face": "🐰",
-            "rabbit": "🐇",
-            "chipmunk": "🐿️",
-            "beaver": "🦫",
-            "hedgehog": "🦔",
-            "bat": "🦇",
-            "bear": "🐻",
-            "polar_bear": "🐻‍❄️",
-            "koala": "🐨",
-            "panda": "🐼",
-            "sloth": "🦥",
-            "otter": "🦦",
-            "skunk": "🦨",
-            "kangaroo": "🦘",
-            "badger": "🦡",
-            "paw_prints": "🐾",
-            "turkey": "🦃",
-            "chicken": "🐔",
-            "rooster": "🐓",
-            "hatching_chick": "🐣",
-            "baby_chick": "🐤",
-            "front_facing_baby_chick": "🐥",
-            "bird": "🐦",
-            "penguin": "🐧",
-            "dove": "🕊️",
-            "eagle": "🦅",
-            "duck": "🦆",
-            "swan": "🦢",
-            "owl": "🦉",
-            "dodo": "🦤",
-            "feather": "🪶",
-            "flamingo": "🦩",
-            "peacock": "🦚",
-            "parrot": "🦜",
-            "frog": "🐸",
-            "crocodile": "🐊",
-            "turtle": "🐢",
-            "lizard": "🦎",
-            "snake": "🐍",
-            "dragon_face": "🐲",
-            "dragon": "🐉",
-            "sauropod": "🦕",
-            "t_rex": "🦖",
-            "spouting_whale": "🐳",
-            "whale": "🐋",
-            "dolphin": "🐬",
-            "seal": "🦭",
-            "fish": "🐟",
-            "tropical_fish": "🐠",
-            "blowfish": "🐡",
-            "shark": "🦈",
-            "octopus": "🐙",
-            "spiral_shell": "🐚",
-            "snail": "🐌",
-            "butterfly": "🦋",
-            "bug": "🐛",
-            "ant": "🐜",
-            "honeybee": "🐝",
-            "beetle": "🪲",
-            "lady_beetle": "🐞",
-            "cricket": "🦗",
-            "cockroach": "🪳",
-            "spider": "🕷️",
-            "spider_web": "🕸️",
-            "scorpion": "🦂",
-            "mosquito": "🦟",
-            "fly": "🪰",
-            "worm": "🪱",
-            "microbe": "🦠",
-            "bouquet": "💐",
-            "cherry_blossom": "🌸",
-            "white_flower": "💮",
-            "rosette": "🏵️",
-            "rose": "🌹",
-            "wilted_flower": "🥀",
-            "hibiscus": "🌺",
-            "sunflower": "🌻",
-            "blossom": "🌼",
-            "tulip": "🌷",
-            "seedling": "🌱",
-            "potted_plant": "🪴",
-            "evergreen_tree": "🌲",
-            "deciduous_tree": "🌳",
-            "palm_tree": "🌴",
-            "cactus": "🌵",
-            "sheaf_of_rice": "🌾",
-            "herb": "🌿",
-            "shamrock": "☘️",
-            "four_leaf_clover": "🍀",
-            "maple_leaf": "🍁",
-            "fallen_leaf": "🍂",
-            "leaf_fluttering_in_wind": "🍃",
-            "grapes": "🍇",
-            "melon": "🍈",
-            "watermelon": "🍉",
-            "tangerine": "🍊",
-            "lemon": "🍋",
-            "banana": "🍌",
-            "pineapple": "🍍",
-            "mango": "🥭",
-            "red_apple": "🍎",
-            "green_apple": "🍏",
-            "pear": "🍐",
-            "peach": "🍑",
-            "cherries": "🍒",
-            "strawberry": "🍓",
-            "blueberries": "🫐",
-            "kiwi_fruit": "🥝",
-            "tomato": "🍅",
-            "olive": "🫒",
-            "coconut": "🥥",
-            "avocado": "🥑",
-            "eggplant": "🍆",
-            "potato": "🥔",
-            "carrot": "🥕",
-            "ear_of_corn": "🌽",
-            "hot_pepper": "🌶️",
-            "bell_pepper": "🫑",
-            "cucumber": "🥒",
-            "leafy_green": "🥬",
-            "broccoli": "🥦",
-            "garlic": "🧄",
-            "onion": "🧅",
-            "mushroom": "🍄",
-            "peanuts": "🥜",
-            "chestnut": "🌰",
-            "bread": "🍞",
-            "croissant": "🥐",
-            "baguette_bread": "🥖",
-            "flatbread": "🫓",
-            "pretzel": "🥨",
-            "bagel": "🥯",
-            "pancakes": "🥞",
-            "waffle": "🧇",
-            "cheese_wedge": "🧀",
-            "meat_on_bone": "🍖",
-            "poultry_leg": "🍗",
-            "cut_of_meat": "🥩",
-            "bacon": "🥓",
-            "face_with_tears_of_joy": "😂",
-            "smiling_face_with_heart_eyes": "😍",
-            "face_with_rolling_eyes": "🙄",
-            "face_with_medical_mask": "😷",
-            "face_with_thermometer": "🤒",
-            "face_with_head_bandage": "🤕",
-            "nauseated_face": "🤢",
-            "sneezing_face": "🤧",
-            "hot_face": "🥵",
-            "cold_face": "🥶",
-            "woozy_face": "🥴",
-            "partying_face": "🥳",
-            "smiling_face_with_tear": "🥲",
-            "disguised_face": "🥸",
-            "pinched_fingers": "🤌",
-            "anatomical_heart": "🫀",
-            "lungs": "🫁",
-            "people_hugging": "🫂",
-            "blueberries": "🫐",
-            "bell_pepper": "🫑",
-            "olive": "🫒",
-            "flatbread": "🫓",
-            "tamale": "🫔",
-            "fondue": "🫕",
-            "teapot": "🫖",
-            "bubble_tea": "🧋",
-            "beaver": "🦫",
-            "polar_bear": "🐻‍❄️",
-            "feather": "🪶",
-            "seal": "🦭",
-            "beetle": "🪲",
-            "cockroach": "🪳",
-            "fly": "🪰",
-            "worm": "🪱",
-            "rock": "🪨",
-            "wood": "🪵",
-            "hut": "🛖",
-            "pickup_truck": "🛻",
-            "roller_skate": "🛼",
-            "magic_wand": "🪄",
-            "piñata": "🪅",
-            "nesting_dolls": "🪆",
-            "coin": "🪙",
-            "boomerang": "🪃",
-            "carpentry_saw": "🪚",
-            "screwdriver": "🪛",
-            "hook": "🪝",
-            "ladder": "🪜",
-            "mirror": "🪞",
-            "window": "🪟",
-            "plunger": "🪠",
-            "sewing_needle": "🪡",
-            "knots": "🪢",
-            "bucket": "🪣",
-            "mouse_trap": "🪤",
-            "toothbrush": "🪥",
-            "headstone": "🪦",
-            "placard": "🪧",
-            "transgender_flag": "🏳️‍⚧️",
-            "transgender_symbol": "⚧️",
-            "arrow_up": "⬆️",
-            "arrow_down": "⬇️",
-        }
-        return emoji_dict.get(emoji_name, None)
-
 
 def setupRoleAssignment(bot):
     bot.add_cog(RoleAssignment(bot))

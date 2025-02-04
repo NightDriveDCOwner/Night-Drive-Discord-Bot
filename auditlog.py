@@ -187,7 +187,7 @@ class AuditLog(commands.Cog):
     
     @commands.Cog.listener()
     async def on_ready(self):
-        self.logger.info("AuditLog is ready.")
+        self.logger.debug("AuditLog is ready.")
         self.logger.debug(f"Loaded channel ID: {self.channel_id}")
         
 def setupAuditLog(bot):

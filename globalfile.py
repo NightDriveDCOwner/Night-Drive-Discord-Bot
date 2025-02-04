@@ -275,40 +275,47 @@ class Globalfile(commands.Cog):
     
     @tasks.loop(hours=1)
     async def check_warn_levels(self):
-        """Überprüft regelmäßig die Warnlevel und reduziert sie gegebenenfalls."""
+        """Überprüft das Warnlevel jedes Benutzers und reduziert es, wenn die letzte Warnung länger als 4 Monate zurückliegt."""
         cursor = self.db.connection.cursor()
-        current_time = self.get_current_time()
-        four_months_ago = current_time - timedelta(days=4*30)  # Grobe Schätzung für 4 Monate
+        four_months_ago = self.get_current_time() - timedelta(days=4*30)  # Annahme: 1 Monat = 30 Tage
 
-        # Hole alle Benutzer mit WARNLEVEL > 0
-        cursor.execute("SELECT ID, WARNLEVEL FROM USER WHERE WARNLEVEL > 0")
+        # Hole alle Benutzer, deren Warnlevel angepasst werden muss
+        cursor.execute("""
+            SELECT ID, WARNLEVEL, WARNLEVEL_ADJUSTED
+            FROM USER
+            WHERE WARNLEVEL > 0
+        """)
         users = cursor.fetchall()
 
-        for user_id, warnlevel in users:
-            # Überprüfe, wann der letzte Warn für diesen Benutzer war
-            cursor.execute("SELECT MAX(INSERTDATE) FROM WARN WHERE USERID = ?", (user_id,))
+        for user in users:
+            user_id, warn_level, warnlevel_adjusted = user
+
+            # Überprüfe, ob die letzte Warnung länger als 4 Monate zurückliegt
+            cursor.execute("""
+                SELECT MAX(INSERTDATE)
+                FROM WARN
+                WHERE USERID = ?
+                AND DELETED <> 1
+            """, (user_id,))
             last_warn_date = cursor.fetchone()[0]
 
             if last_warn_date:
-                last_warn_date = datetime.strptime(last_warn_date, '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc)
+                last_warn_date = datetime.strptime(last_warn_date, '%Y-%m-%d %H:%M:%S')
+                last_warn_date = last_warn_date.replace(tzinfo=timezone.utc)  # Offset-bewusst machen
                 if last_warn_date < four_months_ago:
-                    # Überprüfe, wann die letzte System-Note für die Reduzierung des Warnlevels war
-                    cursor.execute("SELECT MAX(INSERT_DATE) FROM NOTE WHERE USERID = ? AND NOTE LIKE 'System Note: Warnlevel reduced%'", (user_id,))
-                    last_note_date = cursor.fetchone()[0]
-
-                    if not last_note_date or datetime.strptime(last_note_date, '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc) < four_months_ago:
+                    # Überprüfe, ob die letzte Warnlevel-Anpassung auch länger als 4 Monate zurückliegt
+                    if not warnlevel_adjusted or datetime.strptime(warnlevel_adjusted, '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc) < four_months_ago:
                         # Reduziere das Warnlevel um 1
-                        new_warnlevel = max(0, warnlevel - 1)
-                        cursor.execute("UPDATE USER SET WARNLEVEL = ? WHERE ID = ?", (new_warnlevel, user_id))
+                        new_warn_level = max(0, warn_level - 1)
+                        current_time = self.get_current_time().strftime('%Y-%m-%d %H:%M:%S')
+                        cursor.execute("""
+                            UPDATE USER
+                            SET WARNLEVEL = ?, WARNLEVEL_ADJUSTED = ?
+                            WHERE ID = ?
+                        """, (new_warn_level, current_time, user_id))
                         self.db.connection.commit()
-
-                        # Füge eine System-Note hinzu
-                        system_note = f"System Note: Warnlevel reduced from {warnlevel} to {new_warnlevel}"
-                        cursor.execute("INSERT INTO NOTE (NOTE, USERID, INSERT_DATE) VALUES (?, ?, ?)", (system_note, user_id, current_time.strftime('%Y-%m-%d %H:%M:%S')))
-                        self.db.connection.commit()
-
-                        self.logger.info(f"Warnlevel for user {user_id} reduced from {warnlevel} to {new_warnlevel}")
-    
+                        self.logger.info(f"Warnlevel für Benutzer {user_id} auf {new_warn_level} reduziert.")
+        
     tasks.loop(hours=24)
     async def sync_users(self):
         """Synchronisiert die Benutzerdatenbank mit den Mitgliedern des Servers."""
@@ -380,7 +387,7 @@ class Globalfile(commands.Cog):
                         server_embed.set_footer(text="Wir wünschen dir einen tollen Tag!")
 
                         # Sende die Nachricht im Server
-                        birthday_channel = guild.system_channel  # Ersetzen Sie dies durch den gewünschten Kanal
+                        birthday_channel = guild.get_channel(854698447247769630)  # Ersetzen Sie dies durch den gewünschten Kanal
                         if birthday_channel:
                             await birthday_channel.send(embed=server_embed)
 
@@ -404,6 +411,537 @@ class Globalfile(commands.Cog):
                             self.logger.warning(f"Konnte keine Nachricht an {username} ({discord_id}) senden. Möglicherweise hat der Benutzer DMs deaktiviert.")
                     else:
                         self.logger.warning(f"Benutzer {username} ({discord_id}) ist nicht auf dem Server.")
+
+    async def delete_user_data(self, user_id):
+        # Lösche alle Antworten des Benutzers
+        self.cursor.execute("DELETE FROM ANSWER WHERE USERID = ?", (user_id,))
+        
+        # Lösche alle gesetzten Einstellungen des Benutzers
+        self.cursor.execute("DELETE FROM USER_SETTINGS WHERE USERID = ?", (user_id,))
+        
+        self.db.connection.commit()
+    
+    def get_emoji_by_name(self, emoji_name: str) -> Union[disnake.Emoji, disnake.PartialEmoji, None]:
+        # Check custom emojis in the guild
+        guild : disnake.Guild = self.bot.get_guild(854698446996766730)
+        for emoji in guild.emojis:
+            if emoji.name == emoji_name:
+                return emoji
+
+        # Check general Discord emojis
+        try:
+            return disnake.PartialEmoji(name=emoji_name)
+        except ValueError:
+            return None
+        
+    def get_emoji_string_by_name(self, emoji_name: str) -> Union[str, None]:
+        # Check custom emojis in the guild
+        guild: disnake.Guild = self.bot.get_guild(854698446996766730)
+        for emoji in guild.emojis:
+            if emoji.name == emoji_name:
+                return f"<:{emoji.name}:{emoji.id}>"
+
+        # Check general Discord emojis
+        try:
+            partial_emoji = disnake.PartialEmoji(name=emoji_name)
+            return str(partial_emoji)
+        except ValueError:
+            return None        
+        
+    def get_manual_emoji(self, emoji_name: str) -> disnake.Emoji:
+        emoji_dict = {
+            "incoming_envelope": "📨",
+            "keycap_ten": "🔟",
+            "capital_abcd": "🔠",
+            "newspaper": "📰",
+            "sparkler": "🎇",
+            "sparkles": "✨",
+            "microphone2": "🎙️",
+            "night_with_stars": "🌃",
+            "bell": "🔔",
+            "no_bell": "🔕",
+            "question": "❓",
+            "zero": "0️⃣",
+            "one": "1️⃣",
+            "two": "2️⃣",
+            "three": "3️⃣",
+            "four": "4️⃣",
+            "five": "5️⃣",
+            "six": "6️⃣",
+            "seven": "7️⃣",
+            "eight": "8️⃣",
+            "nine": "9️⃣",
+            "ten": "🔟",
+            "circle": "⚪",
+            "blue_circle": "🔵",
+            "red_circle": "🔴",
+            "black_circle": "⚫",
+            "white_circle": "⚪",
+            "purple_circle": "🟣",
+            "green_circle": "🟢",
+            "yellow_circle": "🟡",
+            "brown_circle": "🟤",
+            "orange_circle": "🟠",
+            "pink_circle": "🟣",
+            "large_blue_circle": "🔵",
+            "gun": "🔫",
+            "space_invader": "👾",
+            "crossed_swords": "⚔️",
+            "knife": "🔪",
+            "pick": "⛏️",
+            "smile": "😊",
+            "heart": "❤️",
+            "thumbs_up": "👍",
+            "fire": "🔥",
+            "star": "⭐",
+            "check_mark": "✔️",
+            "cross_mark": "❌",
+            "clap": "👏",
+            "wave": "👋",
+            "rocket": "🚀",
+            "sun": "☀️",
+            "moon": "🌙",
+            "cloud": "☁️",
+            "snowflake": "❄️",
+            "zap": "⚡",
+            "umbrella": "☔",
+            "coffee": "☕",
+            "soccer": "⚽",
+            "basketball": "🏀",
+            "football": "🏈",
+            "baseball": "⚾",
+            "tennis": "🎾",
+            "volleyball": "🏐",
+            "rugby": "🏉",
+            "golf": "⛳",
+            "trophy": "🏆",
+            "medal": "🏅",
+            "crown": "👑",
+            "gem": "💎",
+            "money_bag": "💰",
+            "dollar": "💵",
+            "yen": "💴",
+            "euro": "💶",
+            "pound": "💷",
+            "credit_card": "💳",
+            "shopping_cart": "🛒",
+            "gift": "🎁",
+            "balloon": "🎈",
+            "party_popper": "🎉",
+            "confetti_ball": "🎊",
+            "tada": "🎉",
+            "sparkles": "✨",
+            "boom": "💥",
+            "collision": "💥",
+            "dizzy": "💫",
+            "speech_balloon": "💬",
+            "thought_balloon": "💭",
+            "zzz": "💤",
+            "wave": "👋",
+            "raised_hand": "✋",
+            "ok_hand": "👌",
+            "victory_hand": "✌️",
+            "crossed_fingers": "🤞",
+            "love_you_gesture": "🤟",
+            "call_me_hand": "🤙",
+            "backhand_index_pointing_left": "👈",
+            "backhand_index_pointing_right": "👉",
+            "backhand_index_pointing_up": "👆",
+            "backhand_index_pointing_down": "👇",
+            "index_pointing_up": "☝️",
+            "raised_fist": "✊",
+            "oncoming_fist": "👊",
+            "left_facing_fist": "🤛",
+            "right_facing_fist": "🤜",
+            "clapping_hands": "👏",
+            "raising_hands": "🙌",
+            "open_hands": "👐",
+            "palms_up_together": "🤲",
+            "handshake": "🤝",
+            "folded_hands": "🙏",
+            "writing_hand": "✍️",
+            "nail_polish": "💅",
+            "selfie": "🤳",
+            "muscle": "💪",
+            "mechanical_arm": "🦾",
+            "mechanical_leg": "🦿",
+            "leg": "🦵",
+            "foot": "🦶",
+            "ear": "👂",
+            "ear_with_hearing_aid": "🦻",
+            "nose": "👃",
+            "brain": "🧠",
+            "anatomical_heart": "🫀",
+            "lungs": "🫁",
+            "tooth": "🦷",
+            "bone": "🦴",
+            "eyes": "👀",
+            "eye": "👁️",
+            "tongue": "👅",
+            "mouth": "👄",
+            "baby": "👶",
+            "child": "🧒",
+            "boy": "👦",
+            "girl": "👧",
+            "person": "🧑",
+            "man": "👨",
+            "woman": "👩",
+            "older_person": "🧓",
+            "old_man": "👴",
+            "old_woman": "👵",
+            "person_frowning": "🙍",
+            "person_pouting": "🙎",
+            "person_gesturing_no": "🙅",
+            "person_gesturing_ok": "🙆",
+            "person_tipping_hand": "💁",
+            "person_raising_hand": "🙋",
+            "deaf_person": "🧏",
+            "person_bowing": "🙇",
+            "person_facepalming": "🤦",
+            "person_shrugging": "🤷",
+            "health_worker": "🧑‍⚕️",
+            "student": "🧑‍🎓",
+            "teacher": "🧑‍🏫",
+            "judge": "🧑‍⚖️",
+            "farmer": "🧑‍🌾",
+            "cook": "🧑‍🍳",
+            "mechanic": "🧑‍🔧",
+            "factory_worker": "🧑‍🏭",
+            "office_worker": "🧑‍💼",
+            "scientist": "🧑‍🔬",
+            "technologist": "🧑‍💻",
+            "singer": "🧑‍🎤",
+            "artist": "🧑‍🎨",
+            "pilot": "🧑‍✈️",
+            "astronaut": "🧑‍🚀",
+            "firefighter": "🧑‍🚒",
+            "police_officer": "👮",
+            "detective": "🕵️",
+            "guard": "💂",
+            "ninja": "🥷",
+            "construction_worker": "👷",
+            "prince": "🤴",
+            "princess": "👸",
+            "person_wearing_turban": "👳",
+            "person_with_skullcap": "👲",
+            "woman_with_headscarf": "🧕",
+            "person_in_tuxedo": "🤵",
+            "person_with_veil": "👰",
+            "pregnant_woman": "🤰",
+            "breast_feeding": "🤱",
+            "woman_feeding_baby": "👩‍🍼",
+            "man_feeding_baby": "👨‍🍼",
+            "person_feeding_baby": "🧑‍🍼",
+            "angel": "👼",
+            "santa_claus": "🎅",
+            "mrs_claus": "🤶",
+            "mx_claus": "🧑‍🎄",
+            "superhero": "🦸",
+            "supervillain": "🦹",
+            "mage": "🧙",
+            "fairy": "🧚",
+            "vampire": "🧛",
+            "merperson": "🧜",
+            "elf": "🧝",
+            "genie": "🧞",
+            "zombie": "🧟",
+            "person_getting_massage": "💆",
+            "person_getting_haircut": "💇",
+            "person_walking": "🚶",
+            "person_standing": "🧍",
+            "person_kneeling": "🧎",
+            "person_with_probing_cane": "🧑‍🦯",
+            "person_in_motorized_wheelchair": "🧑‍🦼",
+            "person_in_manual_wheelchair": "🧑‍🦽",
+            "person_running": "🏃",
+            "woman_dancing": "💃",
+            "man_dancing": "🕺",
+            "person_in_suit_levitating": "🕴️",
+            "people_with_bunny_ears": "👯",
+            "person_in_steamy_room": "🧖",
+            "person_climbing": "🧗",
+            "person_fencing": "🤺",
+            "horse_racing": "🏇",
+            "skier": "⛷️",
+            "snowboarder": "🏂",
+            "person_golfing": "🏌️",
+            "person_surfing": "🏄",
+            "person_rowing_boat": "🚣",
+            "person_swimming": "🏊",
+            "person_bouncing_ball": "⛹️",
+            "person_lifting_weights": "🏋️",
+            "person_biking": "🚴",
+            "person_mountain_biking": "🚵",
+            "person_cartwheeling": "🤸",
+            "people_wrestling": "🤼",
+            "person_playing_water_polo": "🤽",
+            "person_playing_handball": "🤾",
+            "person_juggling": "🤹",
+            "person_in_lotus_position": "🧘",
+            "person_taking_bath": "🛀",
+            "person_in_bed": "🛌",
+            "people_holding_hands": "🧑‍🤝‍🧑",
+            "women_holding_hands": "👭",
+            "woman_and_man_holding_hands": "👫",
+            "men_holding_hands": "👬",
+            "kiss": "💏",
+            "couple_with_heart": "💑",
+            "family": "👪",
+            "speaking_head": "🗣️",
+            "bust_in_silhouette": "👤",
+            "busts_in_silhouette": "👥",
+            "footprints": "👣",
+            "monkey_face": "🐵",
+            "monkey": "🐒",
+            "gorilla": "🦍",
+            "orangutan": "🦧",
+            "dog_face": "🐶",
+            "dog": "🐕",
+            "guide_dog": "🦮",
+            "service_dog": "🐕‍🦺",
+            "poodle": "🐩",
+            "wolf": "🐺",
+            "fox": "🦊",
+            "raccoon": "🦝",
+            "cat_face": "🐱",
+            "cat": "🐈",
+            "black_cat": "🐈‍⬛",
+            "lion": "🦁",
+            "tiger_face": "🐯",
+            "tiger": "🐅",
+            "leopard": "🐆",
+            "horse_face": "🐴",
+            "horse": "🐎",
+            "unicorn": "🦄",
+            "zebra": "🦓",
+            "deer": "🦌",
+            "bison": "🦬",
+            "cow_face": "🐮",
+            "ox": "🐂",
+            "water_buffalo": "🐃",
+            "cow": "🐄",
+            "pig_face": "🐷",
+            "pig": "🐖",
+            "boar": "🐗",
+            "pig_nose": "🐽",
+            "ram": "🐏",
+            "ewe": "🐑",
+            "goat": "🐐",
+            "camel": "🐪",
+            "two_hump_camel": "🐫",
+            "llama": "🦙",
+            "giraffe": "🦒",
+            "elephant": "🐘",
+            "mammoth": "🦣",
+            "rhinoceros": "🦏",
+            "hippopotamus": "🦛",
+            "mouse_face": "🐭",
+            "mouse": "🐁",
+            "rat": "🐀",
+            "hamster": "🐹",
+            "rabbit_face": "🐰",
+            "rabbit": "🐇",
+            "chipmunk": "🐿️",
+            "beaver": "🦫",
+            "hedgehog": "🦔",
+            "bat": "🦇",
+            "bear": "🐻",
+            "polar_bear": "🐻‍❄️",
+            "koala": "🐨",
+            "panda": "🐼",
+            "sloth": "🦥",
+            "otter": "🦦",
+            "skunk": "🦨",
+            "kangaroo": "🦘",
+            "badger": "🦡",
+            "paw_prints": "🐾",
+            "turkey": "🦃",
+            "chicken": "🐔",
+            "rooster": "🐓",
+            "hatching_chick": "🐣",
+            "baby_chick": "🐤",
+            "front_facing_baby_chick": "🐥",
+            "bird": "🐦",
+            "penguin": "🐧",
+            "dove": "🕊️",
+            "eagle": "🦅",
+            "duck": "🦆",
+            "swan": "🦢",
+            "owl": "🦉",
+            "dodo": "🦤",
+            "feather": "🪶",
+            "flamingo": "🦩",
+            "peacock": "🦚",
+            "parrot": "🦜",
+            "frog": "🐸",
+            "crocodile": "🐊",
+            "turtle": "🐢",
+            "lizard": "🦎",
+            "snake": "🐍",
+            "dragon_face": "🐲",
+            "dragon": "🐉",
+            "sauropod": "🦕",
+            "t_rex": "🦖",
+            "spouting_whale": "🐳",
+            "whale": "🐋",
+            "dolphin": "🐬",
+            "seal": "🦭",
+            "fish": "🐟",
+            "tropical_fish": "🐠",
+            "blowfish": "🐡",
+            "shark": "🦈",
+            "octopus": "🐙",
+            "spiral_shell": "🐚",
+            "snail": "🐌",
+            "butterfly": "🦋",
+            "bug": "🐛",
+            "ant": "🐜",
+            "honeybee": "🐝",
+            "beetle": "🪲",
+            "lady_beetle": "🐞",
+            "cricket": "🦗",
+            "cockroach": "🪳",
+            "spider": "🕷️",
+            "spider_web": "🕸️",
+            "scorpion": "🦂",
+            "mosquito": "🦟",
+            "fly": "🪰",
+            "worm": "🪱",
+            "microbe": "🦠",
+            "bouquet": "💐",
+            "cherry_blossom": "🌸",
+            "white_flower": "💮",
+            "rosette": "🏵️",
+            "rose": "🌹",
+            "wilted_flower": "🥀",
+            "hibiscus": "🌺",
+            "sunflower": "🌻",
+            "blossom": "🌼",
+            "tulip": "🌷",
+            "seedling": "🌱",
+            "potted_plant": "🪴",
+            "evergreen_tree": "🌲",
+            "deciduous_tree": "🌳",
+            "palm_tree": "🌴",
+            "cactus": "🌵",
+            "sheaf_of_rice": "🌾",
+            "herb": "🌿",
+            "shamrock": "☘️",
+            "four_leaf_clover": "🍀",
+            "maple_leaf": "🍁",
+            "fallen_leaf": "🍂",
+            "leaf_fluttering_in_wind": "🍃",
+            "grapes": "🍇",
+            "melon": "🍈",
+            "watermelon": "🍉",
+            "tangerine": "🍊",
+            "lemon": "🍋",
+            "banana": "🍌",
+            "pineapple": "🍍",
+            "mango": "🥭",
+            "red_apple": "🍎",
+            "green_apple": "🍏",
+            "pear": "🍐",
+            "peach": "🍑",
+            "cherries": "🍒",
+            "strawberry": "🍓",
+            "blueberries": "🫐",
+            "kiwi_fruit": "🥝",
+            "tomato": "🍅",
+            "olive": "🫒",
+            "coconut": "🥥",
+            "avocado": "🥑",
+            "eggplant": "🍆",
+            "potato": "🥔",
+            "carrot": "🥕",
+            "ear_of_corn": "🌽",
+            "hot_pepper": "🌶️",
+            "bell_pepper": "🫑",
+            "cucumber": "🥒",
+            "leafy_green": "🥬",
+            "broccoli": "🥦",
+            "garlic": "🧄",
+            "onion": "🧅",
+            "mushroom": "🍄",
+            "peanuts": "🥜",
+            "chestnut": "🌰",
+            "bread": "🍞",
+            "croissant": "🥐",
+            "baguette_bread": "🥖",
+            "flatbread": "🫓",
+            "pretzel": "🥨",
+            "bagel": "🥯",
+            "pancakes": "🥞",
+            "waffle": "🧇",
+            "cheese_wedge": "🧀",
+            "meat_on_bone": "🍖",
+            "poultry_leg": "🍗",
+            "cut_of_meat": "🥩",
+            "bacon": "🥓",
+            "face_with_tears_of_joy": "😂",
+            "smiling_face_with_heart_eyes": "😍",
+            "face_with_rolling_eyes": "🙄",
+            "face_with_medical_mask": "😷",
+            "face_with_thermometer": "🤒",
+            "face_with_head_bandage": "🤕",
+            "nauseated_face": "🤢",
+            "sneezing_face": "🤧",
+            "hot_face": "🥵",
+            "cold_face": "🥶",
+            "woozy_face": "🥴",
+            "partying_face": "🥳",
+            "smiling_face_with_tear": "🥲",
+            "disguised_face": "🥸",
+            "pinched_fingers": "🤌",
+            "anatomical_heart": "🫀",
+            "lungs": "🫁",
+            "people_hugging": "🫂",
+            "blueberries": "🫐",
+            "bell_pepper": "🫑",
+            "olive": "🫒",
+            "flatbread": "🫓",
+            "tamale": "🫔",
+            "fondue": "🫕",
+            "teapot": "🫖",
+            "bubble_tea": "🧋",
+            "beaver": "🦫",
+            "polar_bear": "🐻‍❄️",
+            "feather": "🪶",
+            "seal": "🦭",
+            "beetle": "🪲",
+            "cockroach": "🪳",
+            "fly": "🪰",
+            "worm": "🪱",
+            "rock": "🪨",
+            "wood": "🪵",
+            "hut": "🛖",
+            "pickup_truck": "🛻",
+            "roller_skate": "🛼",
+            "magic_wand": "🪄",
+            "piñata": "🪅",
+            "nesting_dolls": "🪆",
+            "coin": "🪙",
+            "boomerang": "🪃",
+            "carpentry_saw": "🪚",
+            "screwdriver": "🪛",
+            "hook": "🪝",
+            "ladder": "🪜",
+            "mirror": "🪞",
+            "window": "🪟",
+            "plunger": "🪠",
+            "sewing_needle": "🪡",
+            "knots": "🪢",
+            "bucket": "🪣",
+            "mouse_trap": "🪤",
+            "toothbrush": "🪥",
+            "headstone": "🪦",
+            "placard": "🪧",
+            "transgender_flag": "🏳️‍⚧️",
+            "transgender_symbol": "⚧️",
+            "arrow_up": "⬆️",
+            "arrow_down": "⬇️",
+        }
+        return emoji_dict.get(emoji_name, None)        
     
 def setupGlobal(bot):
     bot.add_cog(Globalfile(bot))

@@ -12,6 +12,7 @@ from auditlog import setupAuditLog
 from clientai import setupClientAI
 from commands import setupCommands
 from roleassignment import setupRoleAssignment
+from cupid import setupCupid
 import disnake
 import logging
 import asyncio
@@ -42,7 +43,7 @@ load_dotenv(dotenv_path="envs/config.env")
 logging_level = os.getenv("LOGGING_LEVEL", "DEBUG").upper()
 logging.basicConfig(level=logging_level, filename="log.log", filemode="w", format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
-# logging.getLogger('disnake.http').setLevel(logging.DEBUG)
+logging.getLogger('disnake.http').setLevel(logging.DEBUG)
 formatter = logging.Formatter('[%(asctime)s - %(name)s - %(levelname)s]: %(message)s')
 
 intents = disnake.Intents.all()
@@ -63,6 +64,7 @@ setupCountbot(bot)
 setupAuditLog(bot)
 setupClientAI(bot)
 setupRoleAssignment(bot)
+setupCupid(bot)
 
 load_dotenv(dotenv_path="envs/token.env")
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")

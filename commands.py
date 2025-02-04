@@ -1,6 +1,7 @@
 import disnake, os, re
 from disnake.ext import commands, tasks
 from disnake.ui import Button, View
+from disnake import ApplicationCommandInteraction, User, Member, Role
 import disnake.file
 import time
 import re
@@ -33,7 +34,7 @@ class MyCommands(commands.Cog):
         load_dotenv(dotenv_path="envs/settings.env")
         self.last_info_message = None
         self.last_info_time = None
-
+        self.level_cog = self.bot.get_cog('Level')
         # Überprüfen, ob der Handler bereits hinzugefügt wurde
         if not self.logger.handlers:
           
@@ -46,7 +47,7 @@ class MyCommands(commands.Cog):
         self.settings_keys = [
             "FACTOR",
             "MESSAGE_WORTH_PER_VOICEMIN",
-            "MIN_ACCOUNT_AGE_DAYS",
+            "MIN_ACCOUNT_AGE_DAYS"
             # Füge hier weitere Schlüssel hinzu, die änderbar sein sollen
         ]            
         
@@ -129,7 +130,7 @@ class MyCommands(commands.Cog):
         await inter.response.defer(ephemeral=True)  # Verzögere die Interaktion        
         try:
             cursor = self.db.connection.cursor()
-            cursor.execute("SELECT USERID, BANNEDTO FROM BAN WHERE UNBAN = 0")
+            cursor.execute("SELECT USERID, BANNEDTO FROM BAN WHERE UNBAN = 0 ORDER BY BANNEDTO DESC")
             bans = cursor.fetchall()
         except sqlite3.Error as e:
             await inter.edit_original_response(f"Ein Fehler ist aufgetreten: {e}")
@@ -139,86 +140,113 @@ class MyCommands(commands.Cog):
             await inter.edit_original_response("Es gibt keine gebannten Benutzer.")
             return
 
-        # Erstellen eines Embeds
-        embed = disnake.Embed(title="Liste der gebannten Benutzer", color=disnake.Color.red())
+        def create_embed(page):
+            embed = disnake.Embed(title="Liste der gebannten Benutzer", color=disnake.Color.red())
+            start = page * 10
+            end = start + 10
+            for ban in bans[start:end]:
+                user_id, unban_time = ban
+                cursor.execute("SELECT USERNAME FROM USER WHERE ID = ?", (user_id,))
+                username_result = cursor.fetchone()
+                username = username_result[0] if username_result else "Unbekannt"
 
-        # Formatierung der Ausgabe
-        for ban in bans:
-            user_id, unban_time = ban
-            cursor.execute("SELECT USERNAME FROM USER WHERE ID = ?", (user_id,))
-            username_result = cursor.fetchone()
-            username = username_result[0] if username_result else "Unbekannt"
+                if unban_time:
+                    unban_date = datetime.fromtimestamp(float(unban_time)).strftime('%Y-%m-%d %H:%M:%S')
+                    embed.add_field(name=f"User ID: {user_id}", value=f"Username: {username}\nEntbannzeitpunkt: {unban_date}", inline=False)
+                else:
+                    embed.add_field(name=f"User ID: {user_id}", value=f"Username: {username}\nEntbannzeitpunkt: Nicht festgelegt", inline=False)
+            embed.set_footer(text=f"Seite {page + 1} von {len(bans) // 10 + 1}")
+            return embed
 
-            if unban_time:
-                # Konvertiere Unix-Zeitstempel in ein lesbares Datum
-                unban_date = datetime.fromtimestamp(unban_time).strftime('%Y-%m-%d %H:%M:%S')
-                embed.add_field(name=f"User ID: {user_id}", value=f"Username: {username}\nEntbannzeitpunkt: {unban_date}", inline=False)
-            else:
-                embed.add_field(name=f"User ID: {user_id}", value=f"Username: {username}\nEntbannzeitpunkt: Nicht festgelegt", inline=False)
+        async def update_embed(interaction, page):
+            embed = create_embed(page)
+            await interaction.response.edit_message(embed=embed, view=create_view(page))
 
-        # Sende die Liste der gebannten Benutzer
-        await inter.edit_original_response(embed=embed)
+        def create_view(page):
+            view = View()
+            if page > 0:
+                view.add_item(Button(label="Zurück", style=disnake.ButtonStyle.primary, custom_id=f"prev_{page}"))
+            if (page + 1) * 10 < len(bans):
+                view.add_item(Button(label="Weiter", style=disnake.ButtonStyle.primary, custom_id=f"next_{page}"))
+            return view
+
+        current_page = 0
+        embed = create_embed(current_page)
+        view = create_view(current_page)
+
+        message = await inter.edit_original_response(embed=embed, view=view)
+
+        def check(interaction: disnake.MessageInteraction):
+            return interaction.message.id == message.id and interaction.user.id == inter.user.id
+
+        while True:
+            interaction = await self.bot.wait_for("message_interaction", check=check)
+            if interaction.data["custom_id"].startswith("prev_"):
+                current_page -= 1
+            elif interaction.data["custom_id"].startswith("next_"):
+                current_page += 1
+            await update_embed(interaction, current_page)
 
     @commands.slash_command(guild_ids=[854698446996766730])
     @rolehierarchy.check_permissions("Moderator")
     async def badword_add(self, inter: disnake.ApplicationCommandInteraction, word: str):
-        """Füge ein Wort zur Badword-Liste hinzu, wenn es noch nicht existiert."""
+        """Füge ein Wort zur Blacklist-Liste hinzu, wenn es noch nicht existiert."""
         await inter.response.defer()  # Verzögere die Interaktion
 
         word = word.strip()  # Entferne führende und abschließende Leerzeichen
         cursor = self.db.connection.cursor()
         
         # Überprüfe, ob das Wort bereits in der Tabelle existiert
-        cursor.execute("SELECT word FROM BADWORD WHERE WORD = ?", (word,))
+        cursor.execute("SELECT word FROM BLACKLIST WHERE WORD = ?", (word,))
         result = cursor.fetchone()
         
-        embed = disnake.Embed(title="Badword Hinzufügen", color=disnake.Color.green())
+        embed = disnake.Embed(title="Blacklist Hinzufügen", color=disnake.Color.green())
 
         if not result:
             # Wort existiert nicht, füge es hinzu
-            cursor.execute("INSERT INTO BADWORD (word) VALUES (?)", (word,))
+            cursor.execute("INSERT INTO BLACKLIST (word) VALUES (?)", (word,))
             self.db.connection.commit()
-            embed.description = f"{word} wurde zur Badword-Liste hinzugefügt."
+            embed.description = f"{word} wurde zur Blacklist-Liste hinzugefügt."
         else:
-            embed.description = f"{word} existiert bereits in der Badword-Liste."
+            embed.description = f"{word} existiert bereits in der Blacklist-Liste."
 
         await inter.edit_original_response(embed=embed)
             
     @commands.slash_command(guild_ids=[854698446996766730])
     @rolehierarchy.check_permissions("Moderator")
     async def badword_remove(self, inter: disnake.ApplicationCommandInteraction, word: str):
-        """Entferne ein Wort von der Badword-Liste."""
+        """Entferne ein Wort von der Blacklist-Liste."""
         await inter.response.defer()  # Verzögere die Interaktion
 
         word = word.strip()  # Entferne führende und abschließende Leerzeichen
         cursor = self.db.connection.cursor()
         
         # Überprüfe, ob das Wort in der Tabelle existiert
-        cursor.execute("SELECT word FROM Badword WHERE word = ?", (word,))
+        cursor.execute("SELECT word FROM Blacklist WHERE word = ?", (word,))
         result = cursor.fetchone()
         
-        embed = disnake.Embed(title="Badword Entfernen", color=disnake.Color.red())
+        embed = disnake.Embed(title="Blacklist Entfernen", color=disnake.Color.red())
 
         if result:
             # Wort existiert, entferne es
-            cursor.execute("DELETE FROM Badword WHERE word = ?", (word,))
+            cursor.execute("DELETE FROM Blacklist WHERE word = ?", (word,))
             self.db.connection.commit()
-            embed.description = f"{word} wurde von der Badword-Liste entfernt."
+            embed.description = f"{word} wurde von der Blacklist-Liste entfernt."
         else:
-            embed.description = f"{word} existiert nicht in der Badword-Liste."
+            embed.description = f"{word} existiert nicht in der Blacklist-Liste."
 
         await inter.edit_original_response(embed=embed)
 
     @commands.slash_command(guild_ids=[854698446996766730])
     @rolehierarchy.check_permissions("Moderator")
     async def badwords_list(self, inter: disnake.ApplicationCommandInteraction):
-        """Zeige die aktuelle Badword-Liste."""
+        """Zeige die aktuelle Blacklist-Liste."""
         await inter.response.defer()  # Verzögere die Interaktion
 
         cursor = self.db.connection.cursor()
         
         # Hole alle Wörter aus der Tabelle
-        cursor.execute("SELECT word FROM Badword")
+        cursor.execute("SELECT word FROM Blacklist")
         badwords = cursor.fetchall()
         
         embed = disnake.Embed(title="Aktuelle Badwords", color=disnake.Color.red())
@@ -227,7 +255,7 @@ class MyCommands(commands.Cog):
             badwords_list = "\n".join(word[0] for word in badwords)
             embed.add_field(name="Badwords", value=badwords_list, inline=False)
         else:
-            embed.add_field(name="Badwords", value="Die Badword-Liste ist leer.", inline=False)
+            embed.add_field(name="Badwords", value="Die Blacklist-Liste ist leer.", inline=False)
 
         await inter.edit_original_response(embed=embed)
 
@@ -296,15 +324,15 @@ class MyCommands(commands.Cog):
     @commands.slash_command(guild_ids=[854698446996766730])
     @rolehierarchy.check_permissions("Senior Supporter")
     async def note_delete(self, inter: disnake.ApplicationCommandInteraction, caseid: int):
-        """Löscht eine Note basierend auf der Note ID."""
-        await inter.response.defer()        
+        """Markiert eine Note als gelöscht basierend auf der Note ID."""
+        await inter.response.defer()
         try:
             cursor = self.db.connection.cursor()
-            cursor.execute("DELETE FROM NOTE WHERE ID = ?", (caseid,))
+            cursor.execute("UPDATE NOTE SET DELETED = 1 WHERE ID = ?", (caseid,))
             self.db.connection.commit()
 
-            embed = disnake.Embed(title="Note gelöscht", description=f"Note mit der ID {caseid} wurde gelöscht.", color=disnake.Color.green())
-            self.logger.info(f"Note deleted: {caseid}")
+            embed = disnake.Embed(title="Note gelöscht", description=f"Note mit der ID {caseid} wurde als gelöscht markiert.", color=disnake.Color.green())
+            self.logger.info(f"Note marked as deleted: {caseid}")
             await inter.edit_original_response(embed=embed)
         except sqlite3.Error as e:
             embed = disnake.Embed(title="Fehler", description=f"Ein Fehler ist aufgetreten: {e}", color=disnake.Color.red())
@@ -328,11 +356,11 @@ class MyCommands(commands.Cog):
             return
 
         # Hole alle Notizen des Benutzers aus der Tabelle Note
-        cursor.execute("SELECT * FROM NOTE WHERE USERID = ?", (userrecord['ID'],))
+        cursor.execute("SELECT * FROM NOTE WHERE USERID = ? AND DELETED <> 1", (userrecord['ID'],))
         notes = cursor.fetchall()
 
         # Hole alle Warnungen des Benutzers aus der Tabelle Warn
-        cursor.execute("SELECT * FROM WARN WHERE USERID = ?", (userrecord['ID'],))
+        cursor.execute("SELECT * FROM WARN WHERE USERID = ? AND DELETED <> 1", (userrecord['ID'],))
         warns = cursor.fetchall()
 
         # Hole alle Bans des Benutzers aus der Tabelle Ban
@@ -347,9 +375,36 @@ class MyCommands(commands.Cog):
         cursor.execute("SELECT SUM(VOICE) FROM VOICE_XP WHERE USERID = ?", (userrecord['ID'],))
         voice_minutes = cursor.fetchone()[0] or 0
 
+        cursor.execute("SELECT SUM(COUNT) FROM INVITE_XP WHERE USERID = ?", (userrecord['ID'],))
+        invites = cursor.fetchone()[0] or 0        
+
+        # Hole die XP und das Level des Benutzers
+        cursor.execute("SELECT (MESSAGE + VOICE + INVITE + BONUS) AS TOTAL_XP, LEVEL, MESSAGE, VOICE, INVITE, BONUS FROM EXPERIENCE WHERE USERID = ?", (userrecord['ID'],))
+        xp_info = cursor.fetchone()
+        total_xp = xp_info[0]
+        current_level = xp_info[1]
+        message_xp = xp_info[2]
+        voice_xp = xp_info[3]
+        invite_xp = xp_info[4]
+        bonus_xp = xp_info[5]
+
+        # Berechne die XP für das nächste Level
+        cursor.execute("SELECT XP FROM LEVELXP WHERE LEVELNAME = ?", (current_level,))
+        current_level_xp = cursor.fetchone()
+        cursor.execute("SELECT XP FROM LEVELXP WHERE LEVELNAME = ?", (current_level+1,))
+        next_level_xp = cursor.fetchone()
+
+        if current_level_xp and next_level_xp:
+            xp_to_next_level = int(next_level_xp[0]) - total_xp
+            xp_percentage = (total_xp - int(current_level_xp[0])) / (int(next_level_xp[0]) - int(current_level_xp[0])) * 100
+        else:
+            xp_to_next_level = 0
+            xp_percentage = 100
+
         # Erstelle ein Embed
         embed = disnake.Embed(title=f"Profil von {user.name}", color=disnake.Color.blue())
-        embed.set_author(name=user.name, icon_url=user.avatar.url if user.avatar else user.default_avatar.url)
+        embed.set_author(name=self.bot.user.name, icon_url=inter.guild.icon.url)
+        embed.set_thumbnail(url=user.avatar.url if inter.user.avatar else inter.user.default_avatar.url)
 
         # Füge Benutzerinformationen hinzu
         current_time = self.globalfile.get_current_time().strftime('%H:%M:%S')
@@ -357,19 +412,57 @@ class MyCommands(commands.Cog):
 
         # Füge Nachrichtenzähler und Voice-Aktivität hinzu
         embed.add_field(name="📨 **Nachrichten**", value=f"{message_count} Nachrichten", inline=False)
-        embed.add_field(name="🎙️ **Voice-Aktivität**", value=f"{voice_minutes} Minuten", inline=False)
+        embed.add_field(name="🎙️ **Voice-Aktivität**", value=f"{int(voice_minutes//2)} Minuten", inline=False)
+
+        # Füge XP und Level hinzu
+        embed.add_field(name="✨ **Level**", value=(
+                        f"Aktuelle Level: {current_level}\n"
+                        f"XP: {int(total_xp//10)} XP\n"
+                        f"XP bis zum nächsten Level: {int(xp_to_next_level//10)} XP ({xp_percentage:.2f}%)"
+                        ), inline=False)
+
+        # Füge detaillierte XP-Informationen hinzu
+        embed.add_field(name="📊 **XP Details**", value=(
+                        f"Nachrichten XP: {int(message_xp//10)} XP\n"
+                        f"Voice XP: {int(voice_xp//10)} XP\n"
+                        f"Invite XP: {int(invite_xp//10)} XP\n"
+                        f"Bonus XP: {int(bonus_xp//10)} XP"
+                        ), inline=False)
 
         # Füge Geburtsdatum hinzu, falls vorhanden
-        if user_info[4]:  # Assuming the birthday is stored in the 5th column
-            embed.add_field(name="🎂 **Geburtstag**", value=user_info[4], inline=False)
+        if user_info[6]:
+            embed.add_field(name="🎂 **Geburtstag**", value=user_info[6], inline=False)
 
+        warn_level = user_info[3]
+        warnlevel_adjusted = user_info[8]
+
+        # Berechne das Datum, wann das nächste Warnlevel entfernt wird
+        if warnlevel_adjusted:
+            last_warn_date = datetime.strptime(warnlevel_adjusted, '%Y-%m-%d %H:%M:%S')
+        else:
+            # Hole das Datum des letzten Warns
+            cursor.execute("SELECT MAX(INSERTDATE) FROM WARN WHERE USERID = ? AND DELETED <> 1", (userrecord['ID'],))
+            last_warn_date = cursor.fetchone()[0]
+            if last_warn_date:
+                last_warn_date = datetime.strptime(last_warn_date, '%Y-%m-%d %H:%M:%S')
+            else:
+                last_warn_date = None
+
+        if last_warn_date:
+            next_warnlevel_removal = last_warn_date + timedelta(days=4*30)  # 4 months later
+            next_warnlevel_removal_str = next_warnlevel_removal.strftime('%Y-%m-%d %H:%M:%S')
+        else:
+            next_warnlevel_removal_str = "N/A"
+
+        embed.add_field(name="⚠️ **Warnlevel**", value=f"Aktuelles Warnlevel: {warn_level}\nNächstes Warnlevel-Entfernung: {next_warnlevel_removal_str}", inline=False)
         # Füge Notizen hinzu
         if notes:
             for note in notes:
                 caseid = note[0]
                 reason = note[2]
                 image_path = note[3]
-                note_text = f"Grund: {reason}"
+                created_at = note[4]  # Annahme: Das Erstellungsdatum ist das fünfte Element im Tupel
+                note_text = f"Grund: {reason}\nErstellt am: {created_at}"
                 if image_path:
                     note_text += f"\nBildpfad: {image_path}"
                 embed.add_field(name=f"Note [ID: {caseid}]", value=note_text, inline=False)
@@ -378,65 +471,23 @@ class MyCommands(commands.Cog):
         else:
             embed.add_field(name="Notizen", value="Keine Notizen vorhanden.", inline=False)
 
-        # Füge Warnungen hinzu
         if warns:
             for warn in warns:
                 caseid = warn[0]
-                reason = warn[1]
-                image_path = warn[2]
-                warn_text = f"Grund: {reason}"
+                reason = warn[2]
+                level = warn[4]
+                created_at = warn[5]
+                image_path = warn[3]
+                warn_text = f"Grund: {reason}\nLevel: {level}\nErstellt am: {created_at}"
                 if image_path:
-                    warn_text += f"\nBildpfad: {image_path}"
+                    note_text += f"\nBildpfad: {image_path}"
                 embed.add_field(name=f"Warnung [ID: {caseid}]", value=warn_text, inline=False)
                 if image_path and os.path.exists(image_path):
                     embed.set_image(file=disnake.File(image_path))
         else:
-            embed.add_field(name="Warnungen", value="Keine Warnungen vorhanden.", inline=False)
+            embed.add_field(name="Warnungen", value="Keine Warnungen vorhanden.", inline=False)             
 
-        # Füge Bans hinzu
-        if bans:
-            for ban in bans:
-                caseid = ban[0]
-                reason = ban[2]
-                ban_end_timestamp = ban[3]
-                image_path = ban[5]
-                unban_status = ban[6]  # Assuming 'Unban' is the 7th column in the BAN table
-
-                ban_text = f"Grund: {reason}"
-                if ban_end_timestamp:
-                    ban_end_time = datetime.fromtimestamp(ban_end_timestamp).strftime('%Y-%m-%d %H:%M:%S')
-                    ban_text += f"\nEnde des Bans: {ban_end_time}"
-                else:
-                    ban_text += "\nEnde des Bans: Unbestimmt"
-
-                if unban_status == 1:
-                    ban_text += "\nStatus: Ban aufgehoben"
-                else:
-                    ban_text += "\nStatus: Ban aktiv"
-
-                if image_path:
-                    ban_text += f"\nBildpfad: {image_path}"
-                embed.add_field(name=f"Ban [ID: {caseid}]", value=ban_text, inline=False)
-                if image_path and os.path.exists(image_path):
-                    embed.set_image(file=disnake.File(image_path))
-        else:
-            embed.add_field(name="Bans", value="Keine Bans vorhanden.", inline=False)
-
-        # Überprüfe die Größe des Embeds und teile es bei Bedarf auf
-        embeds = [embed]
-        if len(embed.fields) > 25:
-            embed2 = disnake.Embed(title=f"Profil von {user.name} (Fortsetzung)", color=disnake.Color.blue())
-            embed2.set_author(name=user.name, icon_url=user.avatar.url if user.avatar else user.default_avatar.url)
-            embed2.set_footer(text=f"ID: {user_info[1]} | {user_info[0]} - heute um {current_time} Uhr")
-            embed2.add_field(name="📨 **Nachrichten**", value=f"{message_count} Nachrichten", inline=False)
-            embed2.add_field(name="🎙️ **Voice-Aktivität**", value=f"{voice_minutes} Minuten", inline=False)
-            if user_info[4]:
-                embed2.add_field(name="🎂 **Geburtstag**", value=user_info[4], inline=False)
-            embeds = [embed, embed2]
-
-        self.logger.info(f"User profile requested for {user.name} (ID: {user.id}) by {inter.author.name}. (ID: {inter.author.id})")
-        for e in embeds:
-            await inter.edit_original_response(embed=e)
+        await inter.edit_original_response(embed=embed)
 
     @commands.slash_command(guild_ids=[854698446996766730])
     @rolehierarchy.check_permissions("Co Owner")
@@ -474,33 +525,6 @@ class MyCommands(commands.Cog):
                     self.db.connection.commit()
         self.logger.info(f"User synchronization completed started by {inter.author.name}. (ID: {inter.author.id})")
         await inter.edit_original_response(content="Benutzer-Synchronisation abgeschlossen.")
-
-    @commands.slash_command(guild_ids=[854698446996766730])
-    @rolehierarchy.check_permissions("Co Owner")
-    async def delete_old_messages(self, inter: disnake.ApplicationCommandInteraction):
-        """Löscht alle Nachrichten, die älter als sieben Tage sind, aus der Datenbank."""
-        await inter.response.defer()
-        cursor = self.db.connection.cursor()
-
-        # Berechne das Datum vor sieben Tagen
-        seven_days_ago = self.globalfile.get_current_time - timedelta(days=7)
-
-        # Hole alle Nachrichten aus der Datenbank
-        cursor.execute("SELECT MESSAGEID, INSERT_DATE FROM Message")
-        all_messages = cursor.fetchall()
-
-        for message_id, insert_date in all_messages:
-            # Konvertiere den Timestamp-String in ein datetime-Objekt
-            message_timestamp = datetime.strptime(insert_date, '%Y-%m-%d %H:%M:%S')
-
-            # Überprüfe, ob die Nachricht älter als sieben Tage ist
-            if message_timestamp < seven_days_ago:
-                # Lösche die Nachricht aus der Datenbank
-                cursor.execute("DELETE FROM Message WHERE MESSAGEID = ?", (message_id,))
-                self.db.connection.commit()
-
-        await inter.edit_original_response(content="Alle Nachrichten, die älter als sieben Tage sind, wurden aus der Datenbank gelöscht.")
-        self.logger.info("All messages older than seven days have been deleted from the database.")
              
     @commands.slash_command(guild_ids=[854698446996766730])
     @rolehierarchy.check_permissions("Co Owner")
@@ -557,6 +581,39 @@ class MyCommands(commands.Cog):
         except disnake.HTTPException as e:
             await inter.edit_original_response(content=f"Ein Fehler ist aufgetreten: {e}")
   
+    @commands.slash_command(guild_ids=[854698446996766730])
+    @rolehierarchy.check_permissions("Administrator")
+    async def warn_inactive_users(self, inter: disnake.ApplicationCommandInteraction, days: int, role: disnake.Role, channel: disnake.TextChannel):
+        """Warnt alle Benutzer, die innerhalb der angegebenen Tage keine Nachrichten geschrieben haben."""
+        await inter.response.defer(ephemeral=True)
+        
+        guild = inter.guild
+        cutoff_date = self.globalfile.get_current_time() - timedelta(days=days)
+        active_users = set()
+
+        if not role:
+            await inter.edit_original_response(content="Die angegebene Rolle existiert nicht.")
+            return
+
+        if not channel:
+            await inter.edit_original_response(content="Der angegebene Kanal existiert nicht.")
+            return
+
+        # Sammle alle aktiven Benutzer
+        for channel in guild.text_channels:
+            async for message in channel.history(limit=None, after=cutoff_date):
+                active_users.add(message.author.id)
+
+        # Vergib die Rolle an inaktive Benutzer
+        inactive_users = [member for member in guild.members if member.id not in active_users and not member.bot]
+        for member in inactive_users:
+            await member.add_roles(role, reason=f"Inaktiv für {days} Tage")
+
+        # Pinge die Rolle im angegebenen Kanal
+        await channel.send(f"{role.mention} Bitte schreibt mal wieder etwas, sonst gibt es Stress! Danke❤️")
+
+        await inter.edit_original_response(content=f"Rolle wurde an {len(inactive_users)} inaktive Benutzer vergeben und Nachricht wurde gesendet.")
+
     @commands.slash_command(guild_ids=[854698446996766730])
     @rolehierarchy.check_permissions("Co Owner")
     async def kick_inactive_users(self, inter: disnake.ApplicationCommandInteraction, months: int, execute: bool = False):
@@ -693,26 +750,6 @@ class MyCommands(commands.Cog):
                     active_users.add(message.author.id)
             except Exception as e:
                 self.logger.warning(f"Fehler beim Durchsuchen der Nachrichten in Kanal {channel.name}: {e}")
-
-    @commands.slash_command(guild_ids=[854698446996766730])
-    @rolehierarchy.check_permissions("Leitung")
-    async def test_kick(self, inter: disnake.ApplicationCommandInteraction, member: disnake.Member):
-        """Testet das Senden einer Nachricht an einen Benutzer."""
-        await inter.response.defer()        
-        self.logger.info(f"User {member.name} (ID: {member.id}) wurde gekickt. (Test)")
-        # Sende Nachricht an den Benutzer
-        invite = await inter.guild.text_channels[0].create_invite(max_uses=1, unique=True)
-        embed = disnake.Embed(title="Du wurdest gekickt von {self.bot.user.name}", color=disnake.Color.dark_blue())
-        embed.set_author(name=self.bot.user.name, icon_url=inter.guild.icon.url)
-        embed.add_field(name="Grund", value=f"Inaktiv für test Monate. Grund für diesen Prozess ist das entfernen von inaktiven/Scammer Accounts", inline=False)                    
-        embed.add_field(name="Wiederbeitreten", value=f"[Hier klicken]({invite.url}) um dem Server wieder beizutreten. Wir empfangen dich gerne erneut, solltest du dem Server wieder beitreten wollen.", inline=False)
-        try:
-            await member.send(embed=embed)        
-            await member.kick(reason=f"Test kick")
-            self.logger.info(f"User {member.name} (ID: {member.id}) was kicked by {inter.user.name} (ID: {inter.user.id}) (Test)")
-        except Exception as e:
-            self.logger.warning(f"Fehler beim Test kick: {e}")
-        await inter.edit_original_response(content=f"Test kick für {member.mention} wurde durchgeführt.")
         
     @commands.slash_command(guild_ids=[854698446996766730])
     @rolehierarchy.check_permissions("Test-Supporter")
@@ -731,13 +768,12 @@ class MyCommands(commands.Cog):
             {"name": "/warn_delete", "description": "Löscht eine Warn basierend auf der Warn ID und setzt das Warnlevel zurück.", "rank": "Senior Supporter"},
             {"name": "/timeout", "description": "Timeout einen Benutzer für eine bestimmte Dauer und optional eine Warnung erstellen.", "rank": "Senior Supporter"},
             {"name": "/timeout_remove", "description": "Entfernt einen Timeout basierend auf der Timeout ID.", "rank": "Moderator"},
-            {"name": "/badword_add", "description": "Füge ein Wort zur Badword-Liste hinzu, wenn es noch nicht existiert.", "rank": "Moderator"},
-            {"name": "/badword_remove", "description": "Entferne ein Wort von der Badword-Liste.", "rank": "Moderator"},
-            {"name": "/badwords_list", "description": "Zeige die aktuelle Badword-Liste.", "rank": "Moderator"},
+            {"name": "/badword_add", "description": "Füge ein Wort zur Blacklist-Liste hinzu, wenn es noch nicht existiert.", "rank": "Moderator"},
+            {"name": "/badword_remove", "description": "Entferne ein Wort von der Blacklist-Liste.", "rank": "Moderator"},
+            {"name": "/badwords_list", "description": "Zeige die aktuelle Blacklist-Liste.", "rank": "Moderator"},
             {"name": "/kick_inactive_users", "description": "Kicke alle Benutzer, die innerhalb der angegebenen Monate keine Nachrichten geschrieben haben.", "rank": "Leitung"},
             {"name": "/remove_role_from_all", "description": "Entfernt eine bestimmte Rolle bei allen Benutzern in der Gilde.", "rank": "Administrator"},
             {"name": "/unban_all_users", "description": "Entbannt alle gebannten Benutzer in der Gilde.", "rank": "Administrator"},
-            {"name": "/delete_old_messages", "description": "Löscht alle Nachrichten, die älter als sieben Tage sind, aus der Datenbank.", "rank": "Leitung"},
             {"name": "/sync_users", "description": "Synchronisiere alle Benutzer des Servers mit der Users Tabelle.", "rank": "Moderator"},
             {"name": "/disconnect", "description": "Schließt alle Verbindungen des Bots und beendet den Bot-Prozess.", "rank": "Administrator"},
             {"name": "/verify_user", "description": "Verifiziert einen Benutzer und gibt ihm die Rolle 'Verified'.", "rank": "Supporter"},
@@ -756,7 +792,7 @@ class MyCommands(commands.Cog):
             {"name": "/help_user", "description": "Zeigt alle Benutzerbefehle an.", "rank": "Level 1+"},
             {"name": "/user", "description": "Get your tag and ID.", "rank": "Level 1+"},
             {"name": "/add_user_to_ticket", "description": "Fügt einen Benutzer zu einem Ticket-Channel hinzu.", "rank": "Level 1+"},
-            {"name": "/my_profile", "description": "Zeigt das eigene Profil an, einschließlich Notizen und Warnungen.", "rank": "Level 1+"},
+            {"name": "/me", "description": "Zeigt das eigene Profil an, einschließlich Notizen und Warnungen.", "rank": "Level 1+"},
             {"name": "/info", "description": "Zeigt Informationen über den Bot an.", "rank": "Level 1+"},
             {"name": "/top_users", "description": "Zeigt alle Moderationsbefehle an.", "rank": "Level 1+"},
             
@@ -888,7 +924,6 @@ class MyCommands(commands.Cog):
         await inter.edit_original_response(content=f"AI_OPEN wurde auf {value} gesetzt.")   
         
     @commands.slash_command(guild_ids=[854698446996766730])
-    @rolehierarchy.check_permissions("Administrator")
     async def set_birthday(self, inter: disnake.ApplicationCommandInteraction, birthday: str):
         """Setzt den Geburtstag eines Benutzers im Format YYYY-MM-DD."""
         await inter.response.defer()
@@ -923,9 +958,9 @@ class MyCommands(commands.Cog):
         self.logger.info(f"User {inter.user.name} (ID: {inter.user.id}) has set their birthday to {birthday_date}.")
 
         await inter.edit_original_response(embed=embed)
-            
+                
     @commands.slash_command(guild_ids=[854698446996766730])
-    async def my_profile(self, inter: disnake.ApplicationCommandInteraction):
+    async def me(self, inter: disnake.ApplicationCommandInteraction):
         """Zeigt dein eigenes Profil an, einschließlich Notizen und Warnungen."""
         await inter.response.defer(ephemeral=True)
         cursor = self.db.connection.cursor()
@@ -940,11 +975,11 @@ class MyCommands(commands.Cog):
             return
 
         # Hole alle Notizen des Benutzers aus der Tabelle Note
-        cursor.execute("SELECT * FROM NOTE WHERE USERID = ?", (userrecord['ID'],))
+        cursor.execute("SELECT * FROM NOTE WHERE USERID = ? AND DELETED <> 1", (userrecord['ID'],))
         notes = cursor.fetchall()
 
         # Hole alle Warnungen des Benutzers aus der Tabelle Warn
-        cursor.execute("SELECT * FROM WARN WHERE USERID = ?", (userrecord['ID'],))
+        cursor.execute("SELECT * FROM WARN WHERE USERID = ? AND DELETED <> 1", (userrecord['ID'],))
         warns = cursor.fetchall()
 
         # Hole die Anzahl der geschriebenen Nachrichten
@@ -955,57 +990,95 @@ class MyCommands(commands.Cog):
         cursor.execute("SELECT SUM(VOICE) FROM VOICE_XP WHERE USERID = ?", (userrecord['ID'],))
         voice_minutes = cursor.fetchone()[0] or 0
 
+        cursor.execute("SELECT SUM(COUNT) FROM INVITE_XP WHERE USERID = ?", (userrecord['ID'],))
+        invites = cursor.fetchone()[0] or 0
+
         # Hole die XP und das Level des Benutzers
-        cursor.execute("SELECT (MESSAGE + VOICE) AS TOTAL_XP, LEVEL FROM EXPERIENCE WHERE USERID = ?", (userrecord['ID'],))
+        cursor.execute("SELECT (MESSAGE + VOICE + INVITE + BONUS) AS TOTAL_XP, LEVEL, MESSAGE, VOICE, INVITE, BONUS FROM EXPERIENCE WHERE USERID = ?", (userrecord['ID'],))
         xp_info = cursor.fetchone()
         total_xp = xp_info[0]
         current_level = xp_info[1]
+        message_xp = xp_info[2]
+        voice_xp = xp_info[3]
+        invite_xp = xp_info[4]
+        bonus_xp = xp_info[5]
 
         # Berechne die XP für das nächste Level
         cursor.execute("SELECT XP FROM LEVELXP WHERE LEVELNAME = ?", (current_level,))
         current_level_xp = cursor.fetchone()
-        cursor.execute("SELECT XP FROM LEVELXP WHERE LEVELNAME = ?", (current_level + 1,))
+        cursor.execute("SELECT XP FROM LEVELXP WHERE LEVELNAME = ?", (current_level+1,))
         next_level_xp = cursor.fetchone()
 
         if current_level_xp and next_level_xp:
-            current_level_xp = int(current_level_xp[0])
-            next_level_xp = int(next_level_xp[0])
-            xp_to_next_level = next_level_xp - total_xp
-            xp_percentage = ((total_xp - current_level_xp) / (next_level_xp - current_level_xp)) * 100
+            xp_to_next_level = int(next_level_xp[0]) - total_xp
+            xp_percentage = (total_xp - int(current_level_xp[0])) / (int(next_level_xp[0]) - int(current_level_xp[0])) * 100
         else:
             xp_to_next_level = 0
             xp_percentage = 100
 
         # Erstelle ein Embed
         embed = disnake.Embed(title=f"Profil von {inter.user.name}", color=disnake.Color.blue())
-        embed.set_author(name=inter.user.name, icon_url=inter.user.avatar.url if inter.user.avatar else inter.user.default_avatar.url)
+        embed.set_author(name=self.bot.user.name, icon_url=inter.guild.icon.url)
+        embed.set_thumbnail(url=inter.user.avatar.url if inter.user.avatar else inter.user.default_avatar.url)
 
         # Füge Benutzerinformationen hinzu
         current_time = self.globalfile.get_current_time().strftime('%H:%M:%S')
         embed.set_footer(text=f"ID: {user_info[1]} | {user_info[0]} - heute um {current_time} Uhr")
 
         # Füge Nachrichtenzähler und Voice-Aktivität hinzu
-        embed.add_field(name="📨 **Nachrichten**", value=f"{message_count} Nachrichten", inline=False)
-        embed.add_field(name="🎙️ **Voice-Aktivität**", value=f"{voice_minutes} Minuten", inline=False)
+        embed.add_field(name="✍️ **Nachrichten**", value=f"{message_count} Nachrichten", inline=False)
+        embed.add_field(name="🎙️ **Voice-Aktivität**", value=f"{int(voice_minutes//2)} Minuten", inline=False)
+        embed.add_field(name="📩 **Einladungen**", value=f"{invites} Einladungen",inline=False)
 
         # Füge XP und Level hinzu
         embed.add_field(name="✨ **Level**", value=(
                         f"Aktuelle Level: {current_level}\n"
-                        f"XP: {total_xp//10} XP\n"
-                        f"XP bis zum nächsten Level: {xp_to_next_level//10} XP ({xp_percentage:.2f}%)"
-                        ), inline=False)               
+                        f"XP: {int(total_xp//10)} XP\n"
+                        f"XP bis zum nächsten Level: {int(xp_to_next_level//10)} XP ({xp_percentage:.2f}%)"
+                        ), inline=False)
+
+        # Füge detaillierte XP-Informationen hinzu
+        embed.add_field(name="📊 **XP Details**", value=(
+                        f"Nachrichten XP: {int(message_xp//10)} XP\n"
+                        f"Voice XP: {int(voice_xp//10)} XP\n"
+                        f"Invite XP: {int(invite_xp//10)} XP\n"
+                        f"Bonus XP: {int(bonus_xp//10)} XP"
+                        ), inline=False)
 
         # Füge Geburtsdatum hinzu, falls vorhanden
-        if user_info[4]:  # Assuming the birthday is stored in the 5th column
-            embed.add_field(name="🎂 **Geburtstag**", value=user_info[8], inline=False)
+        if user_info[6]:
+            embed.add_field(name="🎂 **Geburtstag**", value=user_info[6], inline=False)
 
+        warn_level = user_info[3]
+        warnlevel_adjusted = user_info[8]
+
+        # Berechne das Datum, wann das nächste Warnlevel entfernt wird
+        if warnlevel_adjusted:
+            last_warn_date = datetime.strptime(warnlevel_adjusted, '%Y-%m-%d %H:%M:%S')
+        else:
+            # Hole das Datum des letzten Warns
+            cursor.execute("SELECT MAX(INSERTDATE) FROM WARN WHERE USERID = ? AND DELETED <> 1", (userrecord['ID'],))
+            last_warn_date = cursor.fetchone()[0]
+            if last_warn_date:
+                last_warn_date = datetime.strptime(last_warn_date, '%Y-%m-%d %H:%M:%S')
+            else:
+                last_warn_date = None
+
+        if last_warn_date:
+            next_warnlevel_removal = last_warn_date + timedelta(days=4*30)  # 4 months later
+            next_warnlevel_removal_str = next_warnlevel_removal.strftime('%Y-%m-%d %H:%M:%S')
+        else:
+            next_warnlevel_removal_str = "N/A"
+
+        embed.add_field(name="⚠️ **Warnlevel**", value=f"Aktuelles Warnlevel: {warn_level}\nNächstes Warnlevel-Entfernung: {next_warnlevel_removal_str}", inline=False)
         # Füge Notizen hinzu
         if notes:
             for note in notes:
                 caseid = note[0]
                 reason = note[2]
                 image_path = note[3]
-                note_text = f"Grund: {reason}"
+                created_at = note[4]  # Annahme: Das Erstellungsdatum ist das fünfte Element im Tupel
+                note_text = f"Grund: {reason}\nErstellt am: {created_at}"
                 if image_path:
                     note_text += f"\nBildpfad: {image_path}"
                 embed.add_field(name=f"Note [ID: {caseid}]", value=note_text, inline=False)
@@ -1014,37 +1087,37 @@ class MyCommands(commands.Cog):
         else:
             embed.add_field(name="Notizen", value="Keine Notizen vorhanden.", inline=False)
 
-        # Füge Warnungen hinzu
         if warns:
             for warn in warns:
                 caseid = warn[0]
-                reason = warn[1]
-                image_path = warn[2]
-                warn_text = f"Grund: {reason}"
+                reason = warn[2]
+                level = warn[4]
+                created_at = warn[5]
+                image_path = warn[3]
+                warn_text = f"Grund: {reason}\nLevel: {level}\nErstellt am: {created_at}"
                 if image_path:
-                    warn_text += f"\nBildpfad: {image_path}"
+                    note_text += f"\nBildpfad: {image_path}"
                 embed.add_field(name=f"Warnung [ID: {caseid}]", value=warn_text, inline=False)
                 if image_path and os.path.exists(image_path):
                     embed.set_image(file=disnake.File(image_path))
         else:
-            embed.add_field(name="Warnungen", value="Keine Warnungen vorhanden.", inline=False)
+            embed.add_field(name="Warnungen", value="Keine Warnungen vorhanden.", inline=False)   
 
-        self.logger.info(f"User profile requested for {inter.user.name} (ID: {inter.user.id}) by themselves.")
-        await inter.edit_original_response(embed=embed)     
-    
+        await inter.edit_original_response(embed=embed)
+
     @commands.slash_command(guild_ids=[854698446996766730])
     @rolehierarchy.check_permissions("Administrator")
     async def set_setting(self, inter: disnake.ApplicationCommandInteraction, key: str, value: str):
         """Ändert einen Wert in der settings.env Datei."""
-        inter.response.defer()
+        await inter.response.defer()
         if key not in self.settings_keys:
             await inter.response.send_message(f"Ungültiger Schlüssel: {key}", ephemeral=True)
             return
         
         await inter.response.send_message(f"Der Wert für {key} wurde auf {value} gesetzt.", ephemeral=True)
-        if key == "FACTOR":
+        if key == "FACTOR" or key == "MESSAGE_WORTH_PER_VOICEMIN":
             load_dotenv(dotenv_path="envs/settings.env", override=True)
-            self.factor = value  # Faktor als Prozentwert
+            self.factor = int(value)  # Faktor als Prozentwert
             self.message_worth_per_voicemin = float(os.getenv("MESSAGE_WORTH_PER_VOICEMIN"))
             if key == "FACTOR":
                 set_key("envs/settings.env", "FACTOR", str(value))
@@ -1052,7 +1125,7 @@ class MyCommands(commands.Cog):
                 set_key("envs/settings.env", "MESSAGE_WORTH_PER_VOICEMIN", str(value))                
             
             # Aktualisiere die EXPERIENCE Tabelle
-            cursor = self.db.connection.cursor()
+            cursor : sqlite3.Cursor = self.db.connection.cursor()
             cursor.execute("SELECT USERID FROM EXPERIENCE")
             experience_data = cursor.fetchall()
 
@@ -1069,12 +1142,130 @@ class MyCommands(commands.Cog):
             self.db.connection.commit()
 
             inter.channel.send(f"Der Faktor wurde auf {value}% gesetzt und die EXPERIENCE Tabelle wurde aktualisiert.")
+        elif key == "INVITEXP_FACTOR":
+            set_key("envs/settings.env", "INVITEXP_FACTOR", str(value))
+            self.factor = value
+            if self.level_cog:
+                await self.level_cog.recalculate_experience(inter)
+                await inter.edit_original_response(content=f"INVITEXP Faktor wurde auf {value} gesetzt und die Werte wurden neu berechnet.")
         else:
             set_key("envs/settings.env", key, value)
 
     @set_setting.autocomplete("key")
     async def set_setting_autocomplete(self, inter: disnake.ApplicationCommandInteraction, key: str):
         return [key for key in self.settings_keys if key.startswith(key)]
+    
+    @commands.slash_command(guild_ids=[854698446996766730])
+    @rolehierarchy.check_permissions("Supporter")
+    async def send_message(self, inter: disnake.ApplicationCommandInteraction, channel: disnake.TextChannel, message: str):
+        """Sendet eine Nachricht in einen angegebenen Kanal."""
+        await inter.response.defer(ephemeral=True)
+
+        try:
+            await channel.send(message)
+            await inter.edit_original_response(content=f"Nachricht erfolgreich in {channel.mention} gesendet.")
+        except disnake.Forbidden:
+            await inter.edit_original_response(content=f"Ich habe keine Berechtigung, Nachrichten in {channel.mention} zu senden.")
+        except Exception as e:
+            await inter.edit_original_response(content=f"Ein Fehler ist aufgetreten: {e}")
+
+    @commands.slash_command(guild_ids=[854698446996766730])
+    @rolehierarchy.check_permissions("Supporter")
+    async def send_unofficalwarn_message(self, inter: disnake.ApplicationCommandInteraction, user: disnake.User, reason: str):
+        """Sendet eine ephemere Nachricht an einen anderen Benutzer und benachrichtigt einen bestimmten Kanal."""
+        await inter.response.defer(ephemeral=True)
+        notification_channel_id = 1090588808216596490  # Ersetze dies durch die tatsächliche ID deines Benachrichtigungskanals
+
+        # Nachricht an den Benutzer senden
+        user_embed = disnake.Embed(
+            title="Hinweis auf Fehlverhalten",
+            description="Dies ist ein Hinweis auf ein Fehlverhalten. Diese Nachricht ist noch keine offizielle Warnung.",
+            color=disnake.Color.orange()
+        )
+        user_embed.set_author(name=self.bot.user.name, icon_url=self.bot.user.avatar.url)
+        user_embed.add_field(name="Grund", value=reason, inline=False)
+        user_embed.set_footer(text="Bitte achte in Zukunft auf dein Verhalten.")
+
+        try:
+            await user.send(embed=user_embed)
+            await inter.edit_original_response(content=f"Nachricht erfolgreich an {user.mention} gesendet.")
+        except disnake.Forbidden:
+            await inter.edit_original_response(content=f"Ich kann {user.mention} keine Nachricht senden.")
+            return
+        except Exception as e:
+            await inter.edit_original_response(content=f"Ein Fehler ist aufgetreten: {e}")
+            return
+
+        # Benachrichtigung in den Kanal senden
+        notification_channel = self.bot.get_channel(notification_channel_id)
+        if notification_channel:
+            notification_embed = disnake.Embed(
+                title="Hinweis auf Fehlverhalten gesendet",
+                description=f"Ein Hinweis auf Fehlverhalten wurde an {user.mention} gesendet.",
+                color=disnake.Color.blue()
+            )
+            notification_embed.add_field(name="Grund", value=reason, inline=False)
+            notification_embed.add_field(name="Gesendet von", value=inter.user.mention, inline=False)
+            await notification_channel.send(embed=notification_embed)
+
+    @commands.slash_command(guild_ids=[854698446996766730])
+    @rolehierarchy.check_permissions("Supporter")
+    async def add_second_account(self, inter: ApplicationCommandInteraction, second_user: User, main_user: User):
+        """Fügt einem Benutzer die Zweitaccount-Rolle hinzu und aktualisiert die Datenbank."""
+        await inter.response.defer(ephemeral=True)
+
+        # IDs der Rollen
+        second_account_role_id = 1329202926916472902  # Ersetze dies durch die tatsächliche ID der Zweitaccount-Rolle
+
+        # Finde die Mitglieder
+        second_member = inter.guild.get_member(second_user.id)
+        main_member = inter.guild.get_member(main_user.id)
+
+        if not second_member or not main_member:
+            await inter.edit_original_response(content="Einer der Benutzer konnte nicht gefunden werden.")
+            return
+
+        # Füge die Zweitaccount-Rolle hinzu
+        second_account_role = inter.guild.get_role(second_account_role_id)
+        await second_member.add_roles(second_account_role)
+
+        # Aktualisiere die Datenbank
+        cursor = self.db.connection.cursor()
+        userrecord = self.globalfile.get_user_record(discordid=second_user.id)
+        # Setze SECONDACC_USERID im Hauptaccount
+        cursor.execute("UPDATE USER SET SECONDACC_USERID = ? WHERE DISCORDID = ?", (userrecord['ID'], main_user.id))
         
+        # Setze XP und Level des Zweitaccounts auf 0 und 1
+        cursor.execute("UPDATE EXPERIENCE SET MESSAGE = 0, VOICE = 0, LEVEL = 1, INVITE = 0 WHERE USERID = (SELECT ID FROM USER WHERE DISCORDID = ?)", (second_user.id,))
+        
+        # Entferne alle Levelrollen vom Zweitaccount
+        cursor.execute("SELECT ROLE_ID FROM LEVELXP")
+        level_roles_ids = [row[0] for row in cursor.fetchall()]
+        level_roles = [role for role in second_member.roles if role.id in level_roles_ids]
+        for role in level_roles:
+            await second_member.remove_roles(role)
+
+        self.db.connection.commit()
+
+        await inter.edit_original_response(content=f"Zweitaccount-Rolle wurde {second_user.mention} hinzugefügt und Datenbank aktualisiert.")
+
+    @commands.slash_command(guild_ids=[854698446996766730])
+    @rolehierarchy.check_permissions("Owner")
+    async def reorganize_database(self, inter: ApplicationCommandInteraction):
+        """Führt eine Reorganisation der Datenbank durch."""
+        await inter.response.defer(ephemeral=True)
+
+        try:
+            cursor = self.db.connection.cursor()
+            cursor.execute("VACUUM")
+            cursor.execute("ANALYZE")
+            self.db.connection.commit()
+            await inter.edit_original_response(content="Datenbank wurde erfolgreich reorganisiert.")
+            self.logger.info("Datenbank wurde erfolgreich reorganisiert.")
+        except Exception as e:
+            await inter.edit_original_response(content=f"Ein Fehler ist aufgetreten: {e}")
+            self.logger.error(f"Fehler bei der Reorganisation der Datenbank: {e}")
+    
+
 def setupCommands(bot: commands.Bot):
     bot.add_cog(MyCommands(bot))

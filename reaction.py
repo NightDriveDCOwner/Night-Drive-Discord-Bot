@@ -10,6 +10,7 @@ from moderation import Moderation
 import logging
 from dbconnection import DatabaseConnection
 import os
+from cupid import Cupid
 
 class Reaction(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -44,17 +45,24 @@ class Reaction(commands.Cog):
                             current_datetime = self.globalfile.get_current_time()
                             await self.moderation.check_message_for_badwords(message)
                             self.logger.info(f"Nachricht von Server {message.guild.name} erhalten: Channel: {message.channel.name}, Username: {member.name}, Userid: {member.id}, Content: {message.content}")                
-                            embed = disnake.Embed(title=f"Message send in <#{message.channel.id}>!", color=0x4169E1)                                                                
-                            embed.set_author(name=member.name, icon_url=avatar_url)               
-                            embed.add_field(name="Message:", value=message.content, inline=True)              
-                            embed.set_footer(text=f"ID: {member.id} - heute um {current_datetime.strftime('%H:%M:%S')} Uhr \nMessage-ID: {message.id}")
-                            if message.attachments:
-                                embed.set_image(url=message.attachments[0].url)
-            
+                            
+                            content_chunks = [message.content[i:i+1024] for i in range(0, len(message.content), 1024)]
+                            embeds = []
+                            
+                            for i, chunk in enumerate(content_chunks):
+                                embed = disnake.Embed(title=f"Message send in <#{message.channel.id}>!", color=0x4169E1)                                                                
+                                embed.set_author(name=member.name, icon_url=avatar_url)               
+                                embed.add_field(name="Message:", value=chunk, inline=True)              
+                                embed.set_footer(text=f"ID: {member.id} - heute um {current_datetime.strftime('%H:%M:%S')} Uhr \nMessage-ID: {message.id}")
+                                if i == 0 and message.attachments:
+                                    embed.set_image(url=message.attachments[0].url)
+                                embeds.append(embed)
+                            
                             channel = message.guild.get_channel(1208770898832658493)
-                            await channel.send(embed=embed)
+                            for embed in embeds:
+                                await channel.send(embed=embed)
         except Exception as e:
-            self.logger.critical(f"Fehler aufgetreten [on_message]: {e}") 
+            self.logger.critical(f"Fehler aufgetreten [on_message]: {e}")
 
     @commands.Cog.listener()
     async def on_message_delete(self, message: disnake.Message):      
@@ -70,17 +78,23 @@ class Reaction(commands.Cog):
                         current_datetime = self.globalfile.get_current_time()
                         
                         self.logger.info(f"Nachricht von Server {message.guild.name} deleted: Channel: {message.channel.name}. Username: {member.name}, Userid: {member.id}, Content: {message.content}, Message deleted by: {User.username}, User ID: {str(User.userid)}")                                  
-                        embed = disnake.Embed(title=f"Message deleted in <#{message.channel.id}>!", color=0xFF0000)                                                 
-                        embed.set_author(name=member.name, icon_url=avatar_url)               
-                        embed.add_field(name="Message:", value=message.content, inline=False)              
-                        embed.add_field(name="Deleted by:", value=f"{User.username} - {str(User.userid)}", inline=False)
-                        embed.set_footer(text=f"ID: {member.id} - heute um {current_datetime.strftime('%H:%M:%S')} Uhr \nMessage-ID: {message.id}")
+                        
+                        content_chunks = [message.content[i:i+1024] for i in range(0, len(message.content), 1024)]
+                        embeds = []
+                        
+                        for i, chunk in enumerate(content_chunks):
+                            embed = disnake.Embed(title=f"Message deleted in <#{message.channel.id}>!", color=0xFF0000)                                                 
+                            embed.set_author(name=member.name, icon_url=avatar_url)               
+                            embed.add_field(name="Message:", value=chunk, inline=False)              
+                            if i == 0:
+                                embed.add_field(name="Deleted by:", value=f"{User.username} - {str(User.userid)}", inline=False)
+                            embed.set_footer(text=f"ID: {member.id} - heute um {current_datetime.strftime('%H:%M:%S')} Uhr \nMessage-ID: {message.id}")
+                            embeds.append(embed)
 
                         if User.username == member.name:
                             channel = message.guild.get_channel(1208770898832658493)
                         else:
                             channel = message.guild.get_channel(1221018527289577582)
-
 
                         # Ermitteln der USERID des Admins, der die Nachricht gelöscht hat
                         cursor = self.db.connection.cursor()
@@ -92,9 +106,11 @@ class Reaction(commands.Cog):
                         # Aktualisieren der Nachricht in der Datenbank mit DELETED_BY
                         cursor.execute("UPDATE MESSAGE SET DELETED_BY = ? WHERE MESSAGEID = ? AND CHANNELID = ?", (admin_user_id, message.id, message.channel.id))
                         self.db.connection.commit()
-                        await channel.send(embed=embed)                        
+                        
+                        for embed in embeds:
+                            await channel.send(embed=embed)                        
                     except Exception as e:
-                        self.logger.critical(f"Fehler aufgetreten [on_message_delete]: {e}")  
+                        self.logger.critical(f"Fehler aufgetreten [on_message_delete]: {e}")
 
     @commands.Cog.listener()
     async def on_message_edit(self, before: disnake.Message, after: disnake.Message):
@@ -187,7 +203,8 @@ class Reaction(commands.Cog):
                 embed.add_field(name="Mitglied", value=member.mention, inline=False)
                 embed.set_footer(text=f"ID: {member.id} - heute um {current_datetime.strftime('%H:%M:%S')} Uhr")
                 await log_channel.send(embed=embed)
-
+                user_record = self.globalfile.get_user_record(discordid=member.id)
+                await self.globalfile.delete_user_data(user_record['ID'])
         except Exception as e:
             self.logger.critical(f"Fehler aufgetreten [on_member_remove]: {e}")
 

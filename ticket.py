@@ -1,12 +1,13 @@
-import disnake
 from disnake.ext import commands
-import sqlite3
-import logging
 from dbconnection import DatabaseConnection
 from rolehierarchy import rolehierarchy
 from globalfile import Globalfile
 from datetime import datetime
+import disnake
+import logging
 import os
+import sqlite3
+from typing import Union
 
 class Ticket(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -18,7 +19,8 @@ class Ticket(commands.Cog):
         self.logger.addHandler(handler)
         self.db: sqlite3.Connection = DatabaseConnection()
         self.cursor: sqlite3.Cursor = self.db.connection.cursor()
-        self.globalfile = Globalfile(self.bot)
+        self.globalfile = Globalfile(bot)
+        self.guild : disnake.Guild = None
 
         self.cursor.execute("""
             CREATE TABLE IF NOT EXISTS TICKET (
@@ -26,7 +28,8 @@ class Ticket(commands.Cog):
                 TICKETTYPE TEXT,
                 USERID INTEGER NOT NULL,
                 DONE INTEGER DEFAULT (0) NOT NULL,
-                ASSIGNED INTEGER
+                ASSIGNED INTEGER,
+                CREATED_AT TEXT
             )
         """)
         self.db.connection.commit()
@@ -116,6 +119,7 @@ class Ticket(commands.Cog):
         with open(file_path, 'w', encoding='utf-8') as file:
             file.write(html_content)        
 
+
     @commands.Cog.listener()
     async def on_ready(self):
         self.bot.add_view(self.create_bewerbung_view())
@@ -124,25 +128,28 @@ class Ticket(commands.Cog):
         self.bot.add_view(self.create_verify_ticket_view())
 
     def create_bewerbung_view(self):
-        bewerbung_button = disnake.ui.Button(label="Bewerbung erstellen", style=disnake.ButtonStyle.blurple, custom_id="bewerbung_button")
+        bewerbung_button = disnake.ui.Button(label="Öffne ein Bewerbungs Ticket!", emoji=self.globalfile.get_manual_emoji("incoming_envelope"), style=disnake.ButtonStyle.blurple, custom_id="bewerbung_button")
         bewerbung_view = disnake.ui.View(timeout=None)
         bewerbung_view.add_item(bewerbung_button)
         return bewerbung_view
+    
+    def create_admin_ticket_view(self):
+        emoji = self.globalfile.get_emoji_by_name(emoji_name="owner")
+        admin_ticket_button = disnake.ui.Button(label="Öffne ein Admin Ticket!", emoji=emoji, style=disnake.ButtonStyle.blurple, custom_id="admin_ticket_button")
+        admin_ticket_view = disnake.ui.View(timeout=None)
+        admin_ticket_view.add_item(admin_ticket_button)
+        return admin_ticket_view    
 
     def create_ticket_view(self):
-        ticket_button = disnake.ui.Button(label="📫 Öffne ein Ticket!", style=disnake.ButtonStyle.blurple, custom_id="ticket_button")
+        emoji = self.globalfile.get_emoji_by_name(emoji_name="blackhammerids")
+        ticket_button = disnake.ui.Button(label=f"Öffne ein Support Ticket!", emoji=emoji, style=disnake.ButtonStyle.blurple, custom_id="ticket_button")
         ticket_view = disnake.ui.View(timeout=None)
         ticket_view.add_item(ticket_button)
         return ticket_view
-
-    def create_admin_ticket_view(self):
-        admin_ticket_button = disnake.ui.Button(label="Admin Ticket erstellen", style=disnake.ButtonStyle.blurple, custom_id="admin_ticket_button")
-        admin_ticket_view = disnake.ui.View(timeout=None)
-        admin_ticket_view.add_item(admin_ticket_button)
-        return admin_ticket_view
     
     def create_verify_ticket_view(self):
-        verify_ticket_button = disnake.ui.Button(label="Verify Ticket erstellen", style=disnake.ButtonStyle.green, custom_id="verify_ticket_button")
+        emoji = self.globalfile.get_emoji_by_name(emoji_name="verified")
+        verify_ticket_button = disnake.ui.Button(label="Verify Ticket erstellen!", emoji=emoji, style=disnake.ButtonStyle.green, custom_id="verify_ticket_button")
         verify_ticket_view = disnake.ui.View(timeout=None)
         verify_ticket_view.add_item(verify_ticket_button)
         return verify_ticket_view    
@@ -165,6 +172,13 @@ class Ticket(commands.Cog):
             elif custom_id.startswith("close_button_"):
                 ticket_id = int(custom_id.split("_")[-1])
                 await self.close_ticket(interaction, ticket_id)  
+            elif custom_id == "delete_channel_button":
+                team_role_id = 1235534762609872899
+                team_role = disnake.utils.get(interaction.guild.roles, id=team_role_id)
+                if team_role in interaction.user.roles:
+                    await interaction.channel.delete()
+                else:
+                    await interaction.response.send_message("Du hast nicht die erforderlichen Berechtigungen, um diesen Kanal zu löschen.", ephemeral=True)         
 
     async def check_and_update_message(self, channel: disnake.TextChannel, embed, message_type, button_view):
         self.cursor.execute("SELECT MESSAGEID FROM UNIQUE_MESSAGE WHERE MESSAGETYPE = ?", (message_type,))
@@ -228,7 +242,8 @@ class Ticket(commands.Cog):
             return
 
         # Insert the new entry into the database
-        self.cursor.execute("INSERT INTO Ticket (ID, TICKETTYPE, USERID) VALUES (?, ?, ?)", (next_id, ticket_type, interaction.user.id))
+        created_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        self.cursor.execute("INSERT INTO Ticket (ID, TICKETTYPE, USERID, CREATED_AT) VALUES (?, ?, ?, ?)", (next_id, ticket_type, interaction.user.id, created_at))
         self.db.connection.commit()
 
         # Create the Claim button
@@ -247,19 +262,19 @@ class Ticket(commands.Cog):
         
         if ticket_type.lower() == "verify ticket":
             content = ("vielen Dank, dass du dich auf Date Night verifizieren möchtest.\n\n"
-                       "Bitte schicke uns ein Bild von dir mit einem Zettel, auf dem dein Discord-Tag und das aktuelle Datum geschrieben sind. "
-                       "Anschließend erhälst du die <@&1066793314482913391> Rolle, als Bestätigung deiner Identität.\n\n"
-                       "Bitte beachte, dass wir deine Daten nur für die Verifizierung verwenden und sie nicht an Dritte weitergeben. Das Ticket wie auch das Bild werden nach der Verifizierung gelöscht. "
-                       "Wenn du Fragen zur Verifizierung hast, kannst du sie gerne hier im Ticket stellen.\n"
-                       f"Ticket wurde erstellt am: <t:{timestamp}:R>\n\nViele Grüße\nDas Date Night Team"
-                       )
+                    "Bitte schicke uns ein Bild von dir mit einem Zettel, auf dem dein Discord-Tag und das aktuelle Datum geschrieben sind. "
+                    "Anschließend erhälst du die <@&1066793314482913391> Rolle, als Bestätigung deiner Identität.\n\n"
+                    "Bitte beachte, dass wir deine Daten nur für die Verifizierung verwenden und sie nicht an Dritte weitergeben. Das Ticket wie auch das Bild werden nach der Verifizierung gelöscht. "
+                    "Wenn du Fragen zur Verifizierung hast, kannst du sie gerne hier im Ticket stellen.\n"
+                    f"Ticket wurde erstellt am: <t:{timestamp}:R>\n\nViele Grüße\nDas Date Night Team"
+                    )
         else:
             content = ("vielen Dank, dass du dich an uns gewendet hast. Wir sind da um dir zu helfen.\n\n"
-                       "Bitte schildere uns dein Anliegen so detailliert wie möglich, damit wir dir schnell und effektiv helfen können.\n\n"
-                       "Dazu könntest du uns folgende Informationen geben:\n"
-                       "- Was ist dein Anliegen?\n"
-                       "- Seit wann besteht das Problem?/Wann ist es aufgetreten?\n\n"
-                       f"Ticket wurde erstellt am: <t:{timestamp}:R>\n\nViele Grüße\nDas Date Night Team"
+                    "Bitte schildere uns dein Anliegen so detailliert wie möglich, damit wir dir schnell und effektiv helfen können.\n\n"
+                    "Dazu könntest du uns folgende Informationen geben:\n"
+                    "- Was ist dein Anliegen?\n"
+                    "- Seit wann besteht das Problem?/Wann ist es aufgetreten?\n\n"
+                    f"Ticket wurde erstellt am: <t:{timestamp}:R>\n\nViele Grüße\nDas Date Night Team"
             )
         # Create the embed for the message
         ticket_embed = disnake.Embed(
@@ -272,7 +287,7 @@ class Ticket(commands.Cog):
         ticket_embed.set_footer(text=f"Ticket ID: {next_id}")
         ticket_embed.set_author(name=guild.name, icon_url=guild.icon.url)
         await ticket_channel.send(embed=ticket_embed, view=claim_view)
-        await interaction.response.send_message(f"Dein Ticket wurde erfolgreich erstellt. {ticket_channel.mention}", ephemeral=True)   
+        await interaction.response.send_message(f"Dein Ticket wurde erfolgreich erstellt. {ticket_channel.mention}", ephemeral=True)
 
     async def claim_ticket(self, interaction: disnake.Interaction, ticket_id: int, user_id: int):
         role_hierarchy = rolehierarchy()
@@ -298,18 +313,80 @@ class Ticket(commands.Cog):
 
     async def close_ticket(self, interaction: disnake.Interaction, ticket_id: int):
         # Setze das Ticket in der Datenbank auf "DONE"
+        await interaction.response.defer()
         self.cursor.execute("UPDATE TICKET SET DONE = 1 WHERE ID = ?", (ticket_id,))
         self.db.connection.commit()
         await self.export_chat(interaction.channel)
-        # Schließe den Kanal
-        await interaction.channel.delete()
+
+        # Schließe den Kanal nicht sofort, sondern sende ein Embed mit einem Button zum endgültigen Löschen
+        self.cursor.execute("SELECT USERID, TICKETTYPE, CREATED_AT, ASSIGNED FROM Ticket WHERE ID = ?", (ticket_id,))
+        ticket_info = self.cursor.fetchone()
+        user_id, ticket_type, created_at, assigned_id = ticket_info
+        user = await self.bot.fetch_user(user_id)
+
+        # Entferne Schreibrechte des Benutzers
+        team_role_id = 1235534762609872899
+        bot_role_id = 854698446996766738
+
+        team_role = disnake.utils.get(interaction.guild.roles, id=team_role_id)
+        bot_role = disnake.utils.get(interaction.guild.roles, id=bot_role_id)
+
+        for member in interaction.channel.members:
+            if team_role not in member.roles and bot_role not in member.roles:
+                await interaction.channel.set_permissions(member, send_messages=False, read_messages=True)
+
+        # Verschiebe den Kanal in eine andere Kategorie
+        archive_category = disnake.utils.get(interaction.guild.categories, id=1336437509487460523)
+        await interaction.channel.edit(category=archive_category)
 
         # Sende eine DM an den Benutzer, der das Ticket erstellt hat
-        self.cursor.execute("SELECT USERID FROM Ticket WHERE ID = ?", (ticket_id,))
-        user_id = self.cursor.fetchone()[0]
-        user = await self.bot.fetch_user(user_id)
         await user.send(f"Dein Ticket mit der ID {ticket_id} wurde geschlossen.")
         self.logger.info(f"Ticket {ticket_id} wurde erfolgreich geschlossen.")
+
+        # Sende ein Embed in einen bestimmten Channel
+        log_channel = self.bot.get_channel(1061456790279168141)
+        test_channel = self.bot.get_channel(1233796714721317014)  # Ersetze durch die ID des gewünschten Kanals
+        assigned_user = await self.bot.fetch_user(assigned_id) if assigned_id else None
+        embed = disnake.Embed(
+            title="Ticket geschlossen",
+            description=f"Ticket ID: {ticket_id}\nTicket Typ: {ticket_type}\nErstellt von: {user.mention}\nErstellt am: {created_at}\nZugewiesen an: {assigned_user.mention if assigned_user else 'Nicht zugewiesen'}",
+            color=disnake.Color.red()
+        )
+        embed.set_footer(text=f"Geschlossen von: {interaction.user.name}")
+
+        file_path = os.path.join(os.getcwd(), "ticketlogs", f"{interaction.channel.name}_chat_history.html")
+        file = disnake.File(file_path, filename=f"{interaction.channel.name}_chat_history.html")
+
+        # Sende die Datei zuerst
+        file_message = await test_channel.send(file=file)
+
+        # Hole die URL der hochgeladenen Datei
+        file_url = file_message.attachments[0].url
+
+        # Sende das Embed und die Schaltfläche
+        view = disnake.ui.View()
+        view.add_item(disnake.ui.Button(label="Chatverlauf herunterladen", style=disnake.ButtonStyle.link, url=file_url))
+        await log_channel.send(embed=embed, view=view)
+
+        # Sende ein Embed in den Ticket-Kanal mit einem Button zum endgültigen Löschen
+        delete_embed = disnake.Embed(
+            title="Ticket geschlossen",
+            description="Dieses Ticket wurde geschlossen. Klicke auf den Button unten, um den Kanal endgültig zu löschen.",
+            color=disnake.Color.red()
+        )
+        delete_view = disnake.ui.View()
+        delete_view.add_item(disnake.ui.Button(label="Kanal löschen", style=disnake.ButtonStyle.danger, custom_id="delete_channel_button"))
+        await interaction.channel.send(embed=delete_embed, view=delete_view)
+
+    async def export_chat(self, channel: disnake.TextChannel):
+        messages = await self.fetch_channel_messages(channel)
+        html_content = self.format_messages_to_html(messages)
+        directory = os.path.join(os.getcwd(), "ticketlogs")
+        os.makedirs(directory, exist_ok=True)
+        file_path = os.path.join(directory, f"{channel.name}_chat_history.html")
+        await self.save_html_to_file(html_content, file_path)
+
+        self.logger.info(f"Chat history has been exported to {file_path}")
 
 # Define the button callbacks as separate methods
     async def bewerbung_button_callback(self, interaction: disnake.Interaction):
@@ -327,7 +404,7 @@ class Ticket(commands.Cog):
     @commands.slash_command(guild_ids=[854698446996766730])
     async def create_ticket_embeds(self, inter: disnake.ApplicationCommandInteraction):
         await inter.response.defer(ephemeral=True)  # Defer the interaction
-
+        self.guild : disnake.Guild = inter.guild  # Ersetzen Sie YOUR_GUILD_ID durch die ID Ihres Servers
         channel = self.bot.get_channel(1061446191088418888)  # Ersetzen Sie YOUR_CHANNEL_ID durch die ID des Kanals
         guild = inter.guild
 
@@ -344,30 +421,27 @@ class Ticket(commands.Cog):
         bewerbung_embed.set_author(name=self.bot.user.name, icon_url=guild.icon.url if guild.icon else None)
         bewerbung_view = self.create_bewerbung_view()
 
-        # Ticket Embed
-        ticket_embed = disnake.Embed(
-            title="Ticket",
-            description=(
-                "Hier kannst du ein Support-Ticket öffnen, wenn du Fragen hast oder dem Team ein Anliegen schildern möchtest. "
-                "Dieses Ticket ist für allgemeine Unterstützung, technische Hilfe oder andere Anliegen, die die Aufmerksamkeit des Support-Teams erfordern. "
-            ),
-            color=0x0080FF
-        )
-        ticket_embed.set_author(name=self.bot.user.name, icon_url=guild.icon.url if guild.icon else None)
-        ticket_view = self.create_ticket_view()
-
         # Admin Ticket Embed
         admin_ticket_embed = disnake.Embed(
             title="Admin Ticket",
             description=(
-                "Erstelle ein Admin-Ticket, wenn du administrative Anliegen oder Beschwerden hast. "
-                "Dieses Ticket ist für Themen wie Regelverstöße, technische Probleme, oder andere "
-                "wichtige Angelegenheiten, die die Aufmerksamkeit des Administrations-Teams erfordern. "
+                "Erstelle ein Admin-Ticket, wenn du administrative Anliegen hast oder ein Teammitglied melden möchtest. "
+                "Dieses Ticket ist für Themen, welche die Aufmerksamkeit des Administrations-Teams erfordern. "
             ),
             color=0x0080FF
         )
-        admin_ticket_embed.set_author(name=self.bot.user.name, icon_url=guild.icon.url if guild.icon else None)
         admin_ticket_view = self.create_admin_ticket_view()
+        
+        # Ticket Embed
+        ticket_embed = disnake.Embed(
+            title="Support Ticket",
+            description=(
+                "Hier kannst du ein Support-Ticket öffnen, wenn du allgemeine Fragen hast oder einen Spieler melden möchtest. "
+                "Diese Art der Tickets sind für die generelle Unterstützung der User, welche die Aufmerksamkeit des Support-Teams erfordern. "
+            ),
+            color=0x0080FF
+        )
+        ticket_view = self.create_ticket_view()
         
         verify_ticket_embed = disnake.Embed(
             title="Verify Ticket",
@@ -383,10 +457,10 @@ class Ticket(commands.Cog):
         verify_ticket_embed.set_author(name=self.bot.user.name, icon_url=guild.icon.url if guild.icon else None)
         verify_ticket_view = self.create_verify_ticket_view()
 
-        await self.check_and_update_message(channel, bewerbung_embed, "Bewerbung", bewerbung_view)
-        await self.check_and_update_message(channel, ticket_embed, "Ticket", ticket_view)
-        await self.check_and_update_message(channel, admin_ticket_embed, "Admin Ticket", admin_ticket_view)
-        await self.check_and_update_message(self.bot.get_channel(1323005558730657812), verify_ticket_embed, "Verify Ticket", verify_ticket_view)        
+        await self.check_and_update_message(channel, bewerbung_embed, "BEWERBUNG TICKET", bewerbung_view)
+        await self.check_and_update_message(channel, admin_ticket_embed, "ADMIN TICKET", admin_ticket_view)
+        await self.check_and_update_message(channel, ticket_embed, "SUPPORT TICKET", ticket_view)        
+        await self.check_and_update_message(self.bot.get_channel(1323005558730657812), verify_ticket_embed, "VERIFY TICKET", verify_ticket_view)        
         self.logger.info("Ticket Embeds have been created/updated.")
         await inter.edit_original_response(content="Ticket Embeds wurden erstellt/aktualisiert.")    
 

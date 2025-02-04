@@ -162,8 +162,6 @@ class ClientAI(commands.Cog):
         if content:
             await destination.send(content)
 
-    @commands.slash_command(guild_ids=[854698446996766730])
-    @rolehierarchy.check_permissions("Senior Supporter")
     async def ask(self, inter: disnake.ApplicationCommandInteraction, question: str):
         """Stelle eine Frage an die KI."""
         await inter.response.defer()
@@ -180,7 +178,7 @@ class ClientAI(commands.Cog):
                 load_dotenv(dotenv_path="envs/settings.env", override=True)  # Laden der Umgebungsvariablen mit Überschreiben
                 tmp = os.getenv("AI_OPEN")
                 if tmp == "FALSE":
-                    await message.channel.send("Wir haben den Bot aktuell erstmal nur in <#1039179597763313814> zugelassen damit andere Channel nicht voll gespammt werden.")
+                    await message.channel.send("Aktuell nur in <#1039179597763313814> verfügbar.")
                     return
             question = message.content.replace(f"<@{self.bot.user.id}>", "").strip()
             if question:
