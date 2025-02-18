@@ -10,6 +10,8 @@ from rolehierarchy import rolehierarchy
 from dbconnection import DatabaseConnection
 from dotenv import load_dotenv
 import os
+from exceptionhandler import exception_handler
+
 
 class Cupid(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -66,9 +68,8 @@ class Cupid(commands.Cog):
         view.add_item(Button(label="Einstellungen", style=ButtonStyle.gray, custom_id="user_settings"))
         return view
 
-    @commands.slash_command(guild_ids=[854698446996766730])    
-    @rolehierarchy.check_permissions("Administrator")
-    async def dating_info(self, inter: disnake.ApplicationCommandInteraction):
+    @exception_handler
+    async def _dating_info(self, inter: disnake.ApplicationCommandInteraction):
         """Zeigt Informationen über den Dating Bot an."""
         embed = Embed(
             title="Cupid",
@@ -88,6 +89,7 @@ class Cupid(commands.Cog):
         await inter.channel.send(embed=embed, view=self.create_main_view())
         await inter.response.send_message("Embed wurde erfolgreich gesendet.", ephemeral=True)
 
+    @exception_handler
     @commands.Cog.listener()
     async def on_interaction(self, interaction: disnake.MessageInteraction):
         if isinstance(interaction, disnake.MessageInteraction):
@@ -103,8 +105,8 @@ class Cupid(commands.Cog):
             elif custom_id.startswith("gender_"):
                 await interaction.response.defer(ephemeral=True)
                 selected_gender = custom_id.split("_")[1]
-                userrecord = self.globalfile.get_user_record(discordid=interaction.user.id)
-                self.save_user_preference(userrecord['ID'], "preference", selected_gender)
+                userrecord = await self.globalfile.get_user_record(discordid=interaction.user.id)
+                await self.save_user_preference(userrecord['ID'], "preference", selected_gender)
                 embed = Embed(
                     title="Einstellungen",
                     description=f"Du hast erfolgreich {selected_gender} als Präferenz ausgewählt.",
@@ -112,6 +114,7 @@ class Cupid(commands.Cog):
                 )
                 await interaction.edit_original_message(embed=embed, view=None)
 
+    @exception_handler
     async def show_user_settings(self, interaction: disnake.MessageInteraction):
         embed = Embed(
             title="Einstellungen",
@@ -127,8 +130,9 @@ class Cupid(commands.Cog):
 
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
+    @exception_handler
     async def show_next_question(self, interaction: disnake.MessageInteraction, edit=False):
-        user_record = self.globalfile.get_user_record(discordid=str(interaction.user.id))
+        user_record = await self.globalfile.get_user_record(discordid=str(interaction.user.id))
         user_id = user_record['ID']
 
         self.cursor.execute("SELECT COUNT(*) FROM ANSWER WHERE USERID = ?", (user_id,))
@@ -159,20 +163,22 @@ class Cupid(commands.Cog):
             description=question_text,
             color=disnake.Color.blurple()
         )
-        view = self.create_answer_view(question_id)
+        view = await self.create_answer_view(question_id)
         
         if edit:
             await interaction.edit_original_message(embed=embed, view=view)
         else:
             await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
-    def create_answer_view(self, question_id):
+    @exception_handler
+    async def create_answer_view(self, question_id):
         view = View(timeout=None)
         view.add_item(Button(label="no", style=ButtonStyle.red, custom_id=f"answer_{question_id}_no"))
         view.add_item(Button(label="Neutral", style=ButtonStyle.gray, custom_id=f"answer_{question_id}_neutral"))
         view.add_item(Button(label="yes", style=ButtonStyle.green, custom_id=f"answer_{question_id}_yes"))
         return view
 
+    @exception_handler
     @commands.Cog.listener()
     async def on_button_click(self, interaction: disnake.MessageInteraction):
         custom_id = interaction.component.custom_id
@@ -180,11 +186,12 @@ class Cupid(commands.Cog):
             parts = custom_id.split("_")
             if len(parts) == 3:
                 _, question_id, answer = parts
-                self.save_answer(interaction.user.id, int(question_id), answer)
+                await self.save_answer(interaction.user.id, int(question_id), answer)
                 await self.handle_answer(interaction, question_id)
 
-    def save_answer(self, user_id, question_id, answer):
-        user_record = self.globalfile.get_user_record(discordid=str(user_id))
+    @exception_handler
+    async def save_answer(self, user_id, question_id, answer):
+        user_record = await self.globalfile.get_user_record(discordid=str(user_id))
         if user_record:
             user_id = user_record['ID']
             self.cursor.execute("""
@@ -194,6 +201,7 @@ class Cupid(commands.Cog):
             """, (user_id, question_id, answer))
             self.db.connection.commit()
 
+    @exception_handler
     async def handle_answer(self, interaction, question_id):
         embed = interaction.message.embeds[0]
         embed.add_field(name="Status", value="Frage erfolgreich beantwortet. ✅", inline=False)
@@ -201,249 +209,255 @@ class Cupid(commands.Cog):
         await asyncio.sleep(1.5)
         await self.show_next_question(interaction, edit=True)
 
+    @exception_handler
     async def find_matches(self, interaction: disnake.MessageInteraction):
         await interaction.response.defer()
+        try:
+            # Define role IDs
+            MALE_ROLE_ID = 1065695971540996317
+            FEMALE_ROLE_ID = 1065696210771517572
+            DIVERS_ROLE_ID = 1065696212377927680
+            DMS_CLOSED_ROLE_ID = 1066800831225147512
 
-        # Define role IDs
-        MALE_ROLE_ID = 1065695971540996317
-        FEMALE_ROLE_ID = 1065696210771517572
-        DIVERS_ROLE_ID = 1065696212377927680
-        DMS_CLOSED_ROLE_ID = 1066800831225147512
+            member = await interaction.guild.fetch_member(interaction.user.id)
 
-        member = await interaction.guild.fetch_member(interaction.user.id)
+            if DMS_CLOSED_ROLE_ID in [role.id for role in member.roles]:
+                await interaction.followup.send("Du hast die Rolle 'DMs Geschlossen'. Bitte entferne diese Rolle, um fortzufahren.", ephemeral=True)
+                return
+                    
+            if MALE_ROLE_ID in [role.id for role in member.roles]:
+                user_sex = "male"
+            elif FEMALE_ROLE_ID in [role.id for role in member.roles]:
+                user_sex = "female"
+            else:
+                user_sex = "divers"
 
-        if DMS_CLOSED_ROLE_ID in [role.id for role in member.roles]:
-            await interaction.followup.send("Du hast die Rolle 'DMs Geschlossen'. Bitte entferne diese Rolle, um fortzufahren.", ephemeral=True)
-            return
-                
-        if MALE_ROLE_ID in [role.id for role in member.roles]:
-            user_sex = "male"
-        elif FEMALE_ROLE_ID in [role.id for role in member.roles]:
-            user_sex = "female"
-        else:
-            user_sex = "divers"
+            userrecord = await self.globalfile.get_user_record(discordid=interaction.user.id)
+            user_id = userrecord['ID']
 
-        userrecord = self.globalfile.get_user_record(discordid=interaction.user.id)
-        user_id = userrecord['ID']
+            # Update user's sex in the database
+            self.cursor.execute("""
+                INSERT INTO USER_SETTINGS (USERID, SETTING, VALUE)
+                VALUES (?, 'sex', ?)
+                ON CONFLICT(USERID, SETTING) DO UPDATE SET VALUE = excluded.VALUE
+            """, (user_id, user_sex))
+            self.db.connection.commit()
 
-        # Update user's sex in the database
-        self.cursor.execute("""
-            INSERT INTO USER_SETTINGS (USERID, SETTING, VALUE)
-            VALUES (?, 'sex', ?)
-            ON CONFLICT(USERID, SETTING) DO UPDATE SET VALUE = excluded.VALUE
-        """, (user_id, user_sex))
-        self.db.connection.commit()
+            self.cursor.execute("SELECT QUESTIONID, ANSWER FROM ANSWER WHERE USERID = ?", (user_id,))
+            user_answers = self.cursor.fetchall()
 
-        self.cursor.execute("SELECT QUESTIONID, ANSWER FROM ANSWER WHERE USERID = ?", (user_id,))
-        user_answers = self.cursor.fetchall()
+            if not user_answers:
+                await interaction.followup.send("Du hast noch keine Fragen beantwortet.", ephemeral=True)
+                return
 
-        if not user_answers:
-            await interaction.followup.send("Du hast noch keine Fragen beantwortet.", ephemeral=True)
-            return
+            self.cursor.execute("SELECT COUNT(*) FROM QUESTION")
+            total_questions = self.cursor.fetchone()[0]
 
-        self.cursor.execute("SELECT COUNT(*) FROM QUESTION")
-        total_questions = self.cursor.fetchone()[0]
+            if len(user_answers) < total_questions:
+                await interaction.followup.send("Du hast noch nicht alle Fragen beantwortet.", ephemeral=True)
+                return
 
-        if len(user_answers) < total_questions:
-            await interaction.followup.send("Du hast noch nicht alle Fragen beantwortet.", ephemeral=True)
-            return
+            self.cursor.execute("SELECT VALUE FROM USER_SETTINGS WHERE USERID = ? AND SETTING = 'preference'", (user_id,))
+            user_preference = self.cursor.fetchone()
+            if not user_preference:
+                await interaction.followup.send("Du hast noch keine Präferenzen gesetzt. Mache das bitte über den ""Einstellungs""-Button", ephemeral=True)
+                return
+            user_preference = user_preference[0]
 
-        self.cursor.execute("SELECT VALUE FROM USER_SETTINGS WHERE USERID = ? AND SETTING = 'preference'", (user_id,))
-        user_preference = self.cursor.fetchone()
-        if not user_preference:
-            await interaction.followup.send("Du hast noch keine Präferenzen gesetzt. Mache das bitte über den ""Einstellungs""-Button", ephemeral=True)
-            return
-        user_preference = user_preference[0]
-
-        embed = Embed(
-            title="Berechnungen laufen",
-            description="Die Berechnungen laufen und es kann ein paar Minuten dauern. Bitte gedulde dich.",
-            color=disnake.Color.orange()
-        )
-        sent_message: disnake.WebhookMessage = await interaction.followup.send(embed=embed, ephemeral=True)
-        message_id = sent_message.id
-
-        matches = {}
-        for question_id, user_answer in user_answers:
-            self.cursor.execute("SELECT USERID, ANSWER FROM ANSWER WHERE QUESTIONID = ?", (question_id,))
-            matching_users = self.cursor.fetchall()
-            for match in matching_users:
-                match_user_id, match_answer = match
-                if match_user_id == user_id:
-                    continue
-
-                self.cursor.execute("SELECT VALUE FROM USER_SETTINGS WHERE USERID = ? AND SETTING = 'preference'", (match_user_id,))
-                match_preference = self.cursor.fetchone()
-                if not match_preference or match_preference[0] != user_sex:
-                    continue
-
-                match_user_record = self.globalfile.get_user_record(user_id=match_user_id)
-                match_discord_id = match_user_record['DISCORDID']
-                match_member = await interaction.guild.fetch_member(match_discord_id)
-                if not match_member:
-                    continue
-
-                # Check if the match has the DMs Closed role
-                if DMS_CLOSED_ROLE_ID in [role.id for role in match_member.roles]:
-                    continue                
-
-                # Check if the match has the preferred role
-                if user_preference == "male" and MALE_ROLE_ID not in [role.id for role in match_member.roles]:
-                    continue
-                if user_preference == "female" and FEMALE_ROLE_ID not in [role.id for role in match_member.roles]:
-                    continue
-                if user_preference == "divers" and DIVERS_ROLE_ID not in [role.id for role in match_member.roles]:
-                    continue
-
-                score = matches.get(match_user_id, 0)
-                if user_answer == match_answer:
-                    score += 2
-                    self.logger.debug(f"User {match_user_id}: +2 Punkte für gleiche Antwort bei Frage {question_id}")
-                elif (user_answer == "neutral" and match_answer in ["yes", "no"]) or (match_answer == "neutral" and user_answer in ["yes", "no"]):
-                    score += 1
-                    self.logger.debug(f"User {match_user_id}: +1 Punkt für neutrale Antwort bei Frage {question_id}")
-                elif (user_answer == "yes" and match_answer == "no") or (user_answer == "no" and match_answer == "yes"):
-                    score += 0.5
-                    self.logger.debug(f"User {match_user_id}: +0.5 Punkte für unterschiedliche Antwort bei Frage {question_id}")
-                matches[match_user_id] = score
-
-        matches = {k: (v / (total_questions * 2)) * 100 for k, v in matches.items()}
-
-        sorted_matches = sorted(matches.items(), key=lambda x: x[1], reverse=True)[:10]
-        match_list = "\n".join([f"<@{self.globalfile.get_user_record(user_id=match_id)['DISCORDID']}>: {score:.2f}% übereinstimmende Antworten" for match_id, score in sorted_matches])
-
-        embed = Embed(
-            title="Passende User",
-            description=match_list if match_list else "Keine passenden User gefunden.",
-            color=disnake.Color.green()
-        )
-        await interaction.followup.edit_message(message_id, embed=embed)
-
-    @commands.slash_command(guild_ids=[854698446996766730])
-    @rolehierarchy.check_permissions("Administrator")
-    async def debug_top_matches(self, inter: disnake.ApplicationCommandInteraction):
-        """Zeigt die Top 10 Benutzer mit den besten Übereinstimmungen an."""
-        await inter.response.defer()
-
-        # Define role IDs
-        MALE_ROLE_ID = 1065695971540996317
-        FEMALE_ROLE_ID = 1065696210771517572
-        DIVERS_ROLE_ID = 1065696212377927680  # Example ID for the divers role
-
-        member = await inter.guild.fetch_member(inter.user.id)
-        if MALE_ROLE_ID in [role.id for role in member.roles]:
-            user_sex = "male"
-        elif FEMALE_ROLE_ID in [role.id for role in member.roles]:
-            user_sex = "female"
-        else:
-            user_sex = "divers"
-
-        userrecord = self.globalfile.get_user_record(discordid=inter.user.id)
-        user_id = userrecord['ID']
-
-        # Update user's sex in the database
-        self.cursor.execute("""
-            INSERT INTO USER_SETTINGS (USERID, SETTING, VALUE)
-            VALUES (?, 'sex', ?)
-            ON CONFLICT(USERID, SETTING) DO UPDATE SET VALUE = excluded.VALUE
-        """, (user_id, user_sex))
-        self.db.connection.commit()
-
-        self.cursor.execute("SELECT QUESTIONID, ANSWER FROM ANSWER WHERE USERID = ?", (user_id,))
-        user_answers = self.cursor.fetchall()
-
-        if not user_answers:
-            await inter.followup.send("Du hast noch keine Fragen beantwortet.", ephemeral=True)
-            return
-
-        self.cursor.execute("SELECT COUNT(*) FROM QUESTION")
-        total_questions = self.cursor.fetchone()[0]
-
-        if len(user_answers) < total_questions:
-            await inter.followup.send("Du hast noch nicht alle Fragen beantwortet.", ephemeral=True)
-            return
-
-        self.cursor.execute("SELECT VALUE FROM USER_SETTINGS WHERE USERID = ? AND SETTING = 'preference'", (user_id,))
-        user_preference = self.cursor.fetchone()
-        if not user_preference:
-            await inter.followup.send("Du hast noch keine Präferenzen gesetzt. Mache das bitte über den ""Einstellungs""-Button", ephemeral=True)
-            return
-        user_preference = user_preference[0]
-
-        matches = {}
-        match_details = {}
-        for question_id, user_answer in user_answers:
-            self.cursor.execute("SELECT USERID, ANSWER FROM ANSWER WHERE QUESTIONID = ?", (question_id,))
-            matching_users = self.cursor.fetchall()
-            for match in matching_users:
-                match_user_id, match_answer = match
-                if match_user_id == user_id:
-                    continue
-
-                self.cursor.execute("SELECT VALUE FROM USER_SETTINGS WHERE USERID = ? AND SETTING = 'preference'", (match_user_id,))
-                match_preference = self.cursor.fetchone()
-                if not match_preference or match_preference[0] != user_sex:
-                    continue
-
-                match_user_record = self.globalfile.get_user_record(user_id=match_user_id)
-                match_discord_id = match_user_record['DISCORDID']
-                match_member = await inter.guild.fetch_member(match_discord_id)
-                if not match_member:
-                    continue
-
-                # Check if the match has the preferred role
-                if user_preference == "male" and MALE_ROLE_ID not in [role.id for role in match_member.roles]:
-                    continue
-                if user_preference == "female" and FEMALE_ROLE_ID not in [role.id for role in match_member.roles]:
-                    continue
-                if user_preference == "divers" and DIVERS_ROLE_ID not in [role.id for role in match_member.roles]:
-                    continue
-
-                score = matches.get(match_user_id, 0)
-                if user_answer == match_answer:
-                    score += 2
-                    match_details.setdefault(match_user_id, {"+2": 0, "+1": 0, "+0.5": 0})["+2"] += 1
-                    self.logger.debug(f"User {match_user_id}: +2 Punkte für gleiche Antwort bei Frage {question_id}")
-                elif (user_answer == "neutral" and match_answer in ["yes", "no"]) or (match_answer == "neutral" and user_answer in ["yes", "no"]):
-                    score += 1
-                    match_details.setdefault(match_user_id, {"+2": 0, "+1": 0, "+0.5": 0})["+1"] += 1
-                    self.logger.debug(f"User {match_user_id}: +1 Punkt für neutrale Antwort bei Frage {question_id}")
-                elif (user_answer == "yes" and match_answer == "no") or (user_answer == "no" and match_answer == "yes"):
-                    score += 0.5
-                    match_details.setdefault(match_user_id, {"+2": 0, "+1": 0, "+0.5": 0})["+0.5"] += 1
-                    self.logger.debug(f"User {match_user_id}: +0.5 Punkte für unterschiedliche Antwort bei Frage {question_id}")
-                matches[match_user_id] = score
-
-        matches = {k: (v / (total_questions * 2)) * 100 for k, v in matches.items()}
-
-        sorted_matches = sorted(matches.items(), key=lambda x: x[1], reverse=True)[:10]
-        match_list = "\n".join([f"<@{self.globalfile.get_user_record(user_id=match_id)['DISCORDID']}>: {score:.2f}% übereinstimmende Antworten" for match_id, score in sorted_matches])
-
-        for match_id, score in sorted_matches:
-            self.logger.debug(f"User {match_id}: {score:.2f}% übereinstimmende Antworten")
-
-        embed = Embed(
-            title="Top 10 Passende User",
-            description=match_list if match_list else "Keine passenden User gefunden.",
-            color=disnake.Color.green()
-        )
-        await inter.followup.send(embed=embed, ephemeral=True)
-
-        # Create a debug embed for the first match
-        if sorted_matches:
-            top_match_id, top_match_score = sorted_matches[0]
-            top_match_details = match_details.get(top_match_id, {"+2": 0, "+1": 0, "+0.5": 0})
-            debug_embed = Embed(
-                title="Debug Informationen für den Top-Match",
-                description=f"User: <@{self.globalfile.get_user_record(user_id=top_match_id)['DISCORDID']}>",
-                color=disnake.Color.blue()
+            embed = Embed(
+                title="Berechnungen laufen",
+                description="Die Berechnungen laufen und es kann ein paar Minuten dauern. Bitte gedulde dich.",
+                color=disnake.Color.orange()
             )
-            debug_embed.add_field(name="+2 Punkte", value=str(top_match_details["+2"]), inline=True)
-            debug_embed.add_field(name="+1 Punkt", value=str(top_match_details["+1"]), inline=True)
-            debug_embed.add_field(name="+0.5 Punkte", value=str(top_match_details["+0.5"]), inline=True)
-            await inter.followup.send(embed=debug_embed, ephemeral=True)
+            sent_message: disnake.WebhookMessage = await interaction.followup.send(embed=embed, ephemeral=True)
+            message_id = sent_message.id
 
-    def save_user_preference(self, user_id, setting, value):
+            matches = {}
+            for question_id, user_answer in user_answers:
+                self.cursor.execute("SELECT USERID, ANSWER FROM ANSWER WHERE QUESTIONID = ?", (question_id,))
+                matching_users = self.cursor.fetchall()
+                for match in matching_users:
+                    match_user_id, match_answer = match
+                    if match_user_id == user_id:
+                        continue
+
+                    self.cursor.execute("SELECT VALUE FROM USER_SETTINGS WHERE USERID = ? AND SETTING = 'preference'", (match_user_id,))
+                    match_preference = self.cursor.fetchone()
+                    if not match_preference or match_preference[0] != user_sex:
+                        continue
+
+                    match_user_record = await self.globalfile.get_user_record(user_id=match_user_id)
+                    match_discord_id = match_user_record['DISCORDID']
+                    match_member = await interaction.guild.fetch_member(match_discord_id)
+                    if not match_member:
+                        continue
+
+                    # Check if the match has the DMs Closed role
+                    if DMS_CLOSED_ROLE_ID in [role.id for role in match_member.roles]:
+                        continue                
+
+                    # Check if the match has the preferred role
+                    if user_preference == "male" and MALE_ROLE_ID not in [role.id for role in match_member.roles]:
+                        continue
+                    if user_preference == "female" and FEMALE_ROLE_ID not in [role.id for role in match_member.roles]:
+                        continue
+                    if user_preference == "divers" and DIVERS_ROLE_ID not in [role.id for role in match_member.roles]:
+                        continue
+
+                    score = matches.get(match_user_id, 0)
+                    if user_answer == match_answer:
+                        score += 2
+                        self.logger.debug(f"User {match_user_id}: +2 Punkte für gleiche Antwort bei Frage {question_id}")
+                    elif (user_answer == "neutral" and match_answer in ["yes", "no"]) or (match_answer == "neutral" and user_answer in ["yes", "no"]):
+                        score += 1
+                        self.logger.debug(f"User {match_user_id}: +1 Punkt für neutrale Antwort bei Frage {question_id}")
+                    elif (user_answer == "yes" and match_answer == "no") or (user_answer == "no" and match_answer == "yes"):
+                        score += 0
+                        self.logger.debug(f"User {match_user_id}: +0 Punkte für unterschiedliche Antwort bei Frage {question_id}")
+                    matches[match_user_id] = score
+
+            matches = {k: (v / (total_questions * 2)) * 100 for k, v in matches.items()}
+
+            sorted_matches = sorted(matches.items(), key=lambda x: x[1], reverse=True)[:10]
+            match_list = "\n".join([f"<@{(await self.globalfile.get_user_record(user_id=match_id))['DISCORDID']}>: {score:.2f}% übereinstimmende Antworten" for match_id, score in sorted_matches])
+
+            embed = Embed(
+                title="Passende User",
+                description=match_list if match_list else "Keine passenden User gefunden.",
+                color=disnake.Color.green()
+            )
+            await interaction.followup.edit_message(message_id, embed=embed)
+        except Exception as e:
+            self.logger.critical(f"An error occurred: {e}")
+
+    @exception_handler
+    async def _debug_top_matches(self, inter: disnake.ApplicationCommandInteraction):        
+        """Zeigt die Top 10 Benutzer mit den besten Übereinstimmungen an."""
+        try:
+            await inter.response.defer()
+
+            # Define role IDs
+            MALE_ROLE_ID = 1065695971540996317
+            FEMALE_ROLE_ID = 1065696210771517572
+            DIVERS_ROLE_ID = 1065696212377927680  # Example ID for the divers role
+
+            member = await inter.guild.fetch_member(inter.user.id)
+            if MALE_ROLE_ID in [role.id for role in member.roles]:
+                user_sex = "male"
+            elif FEMALE_ROLE_ID in [role.id for role in member.roles]:
+                user_sex = "female"
+            else:
+                user_sex = "divers"
+
+            userrecord = await self.globalfile.get_user_record(discordid=inter.user.id)
+            user_id = userrecord['ID']
+
+            # Update user's sex in the database
+            self.cursor.execute("""
+                INSERT INTO USER_SETTINGS (USERID, SETTING, VALUE)
+                VALUES (?, 'sex', ?)
+                ON CONFLICT(USERID, SETTING) DO UPDATE SET VALUE = excluded.VALUE
+            """, (user_id, user_sex))
+            self.db.connection.commit()
+
+            self.cursor.execute("SELECT QUESTIONID, ANSWER FROM ANSWER WHERE USERID = ?", (user_id,))
+            user_answers = self.cursor.fetchall()
+
+            if not user_answers:
+                await inter.followup.send("Du hast noch keine Fragen beantwortet.", ephemeral=True)
+                return
+
+            self.cursor.execute("SELECT COUNT(*) FROM QUESTION")
+            total_questions = self.cursor.fetchone()[0]
+
+            if len(user_answers) < total_questions:
+                await inter.followup.send("Du hast noch nicht alle Fragen beantwortet.", ephemeral=True)
+                return
+
+            self.cursor.execute("SELECT VALUE FROM USER_SETTINGS WHERE USERID = ? AND SETTING = 'preference'", (user_id,))
+            user_preference = self.cursor.fetchone()
+            if not user_preference:
+                await inter.followup.send("Du hast noch keine Präferenzen gesetzt. Mache das bitte über den ""Einstellungs""-Button", ephemeral=True)
+                return
+            user_preference = user_preference[0]
+
+            matches = {}
+            match_details = {}
+            for question_id, user_answer in user_answers:
+                self.cursor.execute("SELECT USERID, ANSWER FROM ANSWER WHERE QUESTIONID = ?", (question_id,))
+                matching_users = self.cursor.fetchall()
+                for match in matching_users:
+                    match_user_id, match_answer = match
+                    if match_user_id == user_id:
+                        continue
+
+                    self.cursor.execute("SELECT VALUE FROM USER_SETTINGS WHERE USERID = ? AND SETTING = 'preference'", (match_user_id,))
+                    match_preference = self.cursor.fetchone()
+                    if not match_preference or match_preference[0] != user_sex:
+                        continue
+
+                    match_user_record = await self.globalfile.get_user_record(user_id=match_user_id)
+                    match_discord_id = match_user_record['DISCORDID']
+                    match_member = await inter.guild.fetch_member(match_discord_id)
+                    if not match_member:
+                        continue
+
+                    # Check if the match has the preferred role
+                    if user_preference == "male" and MALE_ROLE_ID not in [role.id for role in match_member.roles]:
+                        continue
+                    if user_preference == "female" and FEMALE_ROLE_ID not in [role.id for role in match_member.roles]:
+                        continue
+                    if user_preference == "divers" and DIVERS_ROLE_ID not in [role.id for role in match_member.roles]:
+                        continue
+
+                    score = matches.get(match_user_id, 0)
+                    if user_answer == match_answer:
+                        score += 2
+                        match_details.setdefault(match_user_id, {"+2": 0, "+1": 0, "+0.5": 0})["+2"] += 1
+                        self.logger.debug(f"User {match_user_id}: +2 Punkte für gleiche Antwort bei Frage {question_id}")
+                    elif (user_answer == "neutral" and match_answer in ["yes", "no"]) or (match_answer == "neutral" and user_answer in ["yes", "no"]):
+                        score += 1
+                        match_details.setdefault(match_user_id, {"+2": 0, "+1": 0, "+0.5": 0})["+1"] += 1
+                        self.logger.debug(f"User {match_user_id}: +1 Punkt für neutrale Antwort bei Frage {question_id}")
+                    elif (user_answer == "yes" and match_answer == "no") or (user_answer == "no" and match_answer == "yes"):
+                        score += 0
+                        match_details.setdefault(match_user_id, {"+2": 0, "+1": 0, "+0.5": 0})["+0.5"] += 1
+                        self.logger.debug(f"User {match_user_id}: +0.5 Punkte für unterschiedliche Antwort bei Frage {question_id}")
+                    matches[match_user_id] = score
+
+            matches = {k: (v / (total_questions * 2)) * 100 for k, v in matches.items()}
+
+            sorted_matches = sorted(matches.items(), key=lambda x: x[1], reverse=True)[:10]
+            match_list = "\n".join([f"<@{await self.globalfile.get_user_record(user_id=match_id)['DISCORDID']}>: {score:.2f}% übereinstimmende Antworten" for match_id, score in sorted_matches])
+
+            for match_id, score in sorted_matches:
+                self.logger.debug(f"User {match_id}: {score:.2f}% übereinstimmende Antworten")
+
+            embed = Embed(
+                title="Top 10 Passende User",
+                description=match_list if match_list else "Keine passenden User gefunden.",
+                color=disnake.Color.green()
+            )
+            await inter.followup.send(embed=embed, ephemeral=True)
+
+            # Create a debug embed for the first match
+            if sorted_matches:
+                top_match_id, top_match_score = sorted_matches[0]
+                top_match_details = match_details.get(top_match_id, {"+2": 0, "+1": 0, "+0.5": 0})
+                debug_embed = Embed(
+                    title="Debug Informationen für den Top-Match",
+                    description=f"User: <@{await self.globalfile.get_user_record(user_id=top_match_id)['DISCORDID']}>",
+                    color=disnake.Color.blue()
+                )
+                debug_embed.add_field(name="+2 Punkte", value=str(top_match_details["+2"]), inline=True)
+                debug_embed.add_field(name="+1 Punkt", value=str(top_match_details["+1"]), inline=True)
+                debug_embed.add_field(name="+0.5 Punkte", value=str(top_match_details["+0.5"]), inline=True)
+                await inter.followup.send(embed=debug_embed, ephemeral=True)
+        except Exception as e:
+            self.logger.critical(f"An error occurred: {e}")
+
+    @exception_handler
+    async def save_user_preference(self, user_id, setting, value):
         self.cursor.execute("""
             SELECT VALUE FROM USER_SETTINGS WHERE USERID = ? AND SETTING = ?
         """, (user_id, setting))
@@ -461,9 +475,8 @@ class Cupid(commands.Cog):
 
         self.db.connection.commit()
 
-    @commands.slash_command(guild_ids=[854698446996766730])
-    @rolehierarchy.check_permissions("Administrator")
-    async def recalculate_invite_xp(self, inter: disnake.ApplicationCommandInteraction):
+    @exception_handler
+    async def _recalculate_invite_xp(self, inter: disnake.ApplicationCommandInteraction):
         """Berechnet die INVITEXP Werte aus der INVITE_XP Tabelle neu."""
         await inter.response.defer()
         cursor = self.db.connection.cursor()
@@ -483,8 +496,11 @@ class Cupid(commands.Cog):
         self.db.connection.commit()
         await inter.edit_original_response(content="INVITEXP Werte wurden erfolgreich neu berechnet.") 
 
-    async def delete_data_for_nonexistent_users(self, guild: disnake.Guild):
+    @exception_handler
+    async def _deletedata_for_nonexistent_user(self, inter: disnake.ApplicationCommandInteraction):
         # Hole alle Benutzer-IDs aus der ANSWER-Tabelle
+        await inter.response.defer()
+        cursor = self.db.connection.cursor()
         self.cursor.execute("SELECT DISTINCT USERID FROM ANSWER")
         answer_user_ids = [row[0] for row in self.cursor.fetchall()]
 
@@ -497,17 +513,18 @@ class Cupid(commands.Cog):
 
         # Überprüfe, ob die Benutzer noch auf dem Server sind
         for user_id in all_user_ids:
-            user_record = self.globalfile.get_user_record(user_id=user_id)
+            user_record = await self.globalfile.get_user_record(user_id=user_id)
             if user_record:
                 discord_id = user_record['DISCORDID']
-                member = guild.get_member(int(discord_id))
+                member = inter.guild.get_member(int(discord_id))
                 if not member:
                     # Lösche die Daten des Benutzers, wenn er nicht mehr auf dem Server ist
-                    self.cursor.execute("DELETE FROM ANSWER WHERE USERID = ?", (user_id,))
-                    self.cursor.execute("DELETE FROM USER_SETTINGS WHERE USERID = ?", (user_id,))
+                    cursor.execute("DELETE FROM ANSWER WHERE USERID = ?", (int(user_id),))
+                    cursor.execute("DELETE FROM USER_SETTINGS WHERE USERID = ?", (int(user_id),))
                     self.logger.debug(f"Deleted data for user ID {user_id} who is no longer on the server.")
-
         self.db.connection.commit()
+        
+        await inter.edit_original_response(content="Daten für Benutzer, die nicht mehr auf dem Server sind, wurden erfolgreich gelöscht.")
 
 def setupCupid(bot):
     bot.add_cog(Cupid(bot))

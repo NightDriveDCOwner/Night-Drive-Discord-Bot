@@ -45,13 +45,13 @@ class ClientAI(commands.Cog):
         # Remove any mentions of @everyone
         return re.sub(r'@everyone', '', text)
 
-    def add_to_recent_interactions(self, question: str, answer: str):
-        self.recent_interactions.append((question, answer))
+    def add_to_recent_interactions(self, user: str, question: str, answer: str):
+        self.recent_interactions.append((user, question, answer))
         if len(self.recent_interactions) > 6:
             self.recent_interactions.pop(0)
 
     def get_recent_interactions(self):
-        return "\n".join([f"Q: {q}\nA: {a}" for q, a in self.recent_interactions])
+        return "\n".join([f"User: {u}\nQ: {q}\nA: {a}" for u, q, a in self.recent_interactions])
 
     def filter_sensitive_data(self, text: str) -> str:
         # Implement a basic filter to remove sensitive data
@@ -60,7 +60,7 @@ class ClientAI(commands.Cog):
             text = re.sub(rf'\b{keyword}\b', '[REDACTED]', text, flags=re.IGNORECASE)
         return text
 
-    async def ask_openai(self, question: str):
+    async def ask_openai(self, user: str, question: str):
         sanitized_question = self.sanitize_input(question)
         recent_interactions = self.get_recent_interactions()
         context = f"Dies ist ein Community-Discord-Server-Bot namens {self.bot.user.name} für den Server '{self.bot.user.name}'."
@@ -77,25 +77,33 @@ class ClientAI(commands.Cog):
             if "function" in sanitized_question.lower() or "bot" in sanitized_question.lower() or answer == "true" or "funktion" in sanitized_question.lower() or "aufgabe" in sanitized_question.lower() or "projekt" in sanitized_question.lower() or "code" in sanitized_question.lower():                  
                 return await self.ask_openai_with_files(sanitized_question)
             else:
-                return await self.ask_openai_without_files(sanitized_question)
+                return await self.ask_openai_without_files(user, sanitized_question)
         except Exception as e:
             self.logger.error(f"Fehler bei der Anfrage an OpenAI: {e}")
             return "Es gab einen Fehler bei der Anfrage an OpenAI."
 
-    async def ask_openai_without_files(self, question: str):
+    async def ask_openai_without_files(self, user: str, question: str):
         recent_interactions = self.get_recent_interactions()
-        context = f"Dies ist ein Community-Discord-Server-Bot namens {self.bot.user.name} für den Server '{self.bot.user.name}'. Der Bot interagiert freundlich und kumpelhaft mit den Benutzern. Bitte wirke so als hättest du eine Persönlichkeit damit du lebhafter zu meinen Benutzer von meinem Discord Server bist. Bitte sei aber nicht zu phantasievoll und bringe trotzdem eine gewisse Ersthaftigkeit mit. Wenn du nach Geschmeckern, Empfindungen oder ähnlichem gefragt wirst antworte bitte lustiger. Biete nicht immer direkt deine Hilfe an."
+        context = (
+            f"Dies ist ein Community-Discord-Server-Bot namens {self.bot.user.name}."
+            "Biete nicht immer direkt deine Hilfe an. Der Bot interagiert menschlich mit den Benutzern, soll aber gleichzeitig sehr überheblich wirken. "
+            "Er disst gerne andere User ohne Rücksicht. Bitte wirke so, als hättest du eine Persönlichkeit, damit du ein wenig lebhaft für die Benutzer meines Discord-Servers bist. "
+            "Bitte bringe trotzdem immer eine gewisse Ernsthaftigkeit mit. Wenn du nach Geschmäckern, Empfindungen oder Ähnlichem gefragt wirst, antworte bitte, als hättest du irgendwas davon und nicht als wärst du ein Roboter. "
+            "Du darfst gerne gemein und frech sein und Beleidigungen benutzen. Das darf allerdings nichts Rassistisches beinhalten oder das Wort Nigga. Alles andere ist erlaubt. "
+            "Sei besonders darauf bedacht, die Benutzer zu dissen, zu necken und zu beleidigen, aber immer in einem humorvollen und nicht verletzenden Rahmen. "
+            "Achte darauf, dass die Beleidigungen und Neckereien immer spielerisch und nicht ernst gemeint sind aber nur wenn ein Nutzer äußert, dass er sich angegriffen fühlt."
+        )
         try:
             response = openai.ChatCompletion.create(
                 model="gpt-3.5-turbo",
                 messages=[
                     {"role": "system", "content": context},
-                    {"role": "user", "content": f"Letzte Interaktionen:\n{recent_interactions}\n\nAktuelle Frage: {question}\n"}
+                    {"role": "user", "content": f"Letzte Interaktionen:\n{recent_interactions}\n\nAktuelle Frage von {user}: {question}\n"}
                 ],
             )
             answer = response['choices'][0]['message']['content'].strip()
             filtered_answer = self.filter_sensitive_data(answer)
-            self.add_to_recent_interactions(question, filtered_answer)
+            self.add_to_recent_interactions(user, question, filtered_answer)
             return filtered_answer
         except Exception as e:
             self.logger.error(f"Fehler bei der Anfrage an OpenAI: {e}")
@@ -105,12 +113,12 @@ class ClientAI(commands.Cog):
         sanitized_question = self.sanitize_input(question)
         recent_interactions = self.get_recent_interactions()
         file_chunks = self.get_file_chunks()
-        context = f"Dies ist ein Community-Discord-Server-Bot namens {self.bot.user.name} für den Server '{self.discord_server_name}'. Der Bot interagiert freundlich und kumpelhaft mit den Benutzern. Bitte halte dich kurz und mache das ganze in Stichpunkten wenn möglich. Bitte mache das ganze so, dass es sinnig und logisch ist und sinn ergibt. Ebenfalls ist wichtig, dass du auch die Administration des Server repräsentierst und nicht nur die Community."
+        context = f"Dies ist ein Community-Discord-Server-Bot namens {self.bot.user.name}. Der Bot interagiert freundlich und kumpelhaft mit den Benutzern. Bitte halte dich kurz und mache das ganze in Stichpunkten wenn möglich. Bitte mache das ganze so, dass es sinnig und logisch ist und sinn ergibt. Ebenfalls ist wichtig, dass du auch die Administration des Server repräsentierst und nicht nur die Community."
         answer = ""
         for chunk in file_chunks:
             try:
                 response = openai.ChatCompletion.create(
-                    model="gpt-3.5-turbo",
+                    model="gpt-3.5-turbo", 
                     messages=[
                         {"role": "system", "content": context},
                         {"role": "user", "content": f"Letzte Interaktionen:\n{recent_interactions}\n\nHier ist ein Teil der Projektdateien:\n{chunk}\n\nAktuelle Frage: {sanitized_question}\nAntwort in Stichpunkten (wenn kein expliziter Code angefragt wurde) und nur relevante Informationen:"}
@@ -170,9 +178,8 @@ class ClientAI(commands.Cog):
 
     @commands.Cog.listener()
     async def on_message(self, message: disnake.Message):
-        if self.bot.user.mentioned_in(message) and not message.author.bot:
+        if self.bot.user.mentioned_in(message) and not message.author.bot and (message.channel.id == 1039179597763313814 or message.channel.id == 854698447247769630):
             if "@everyone" in message.content:
-                self.logger.info("Nachricht mit @everyone ignoriert.")
                 return
             if message.channel.id != 1039179597763313814 and message.channel.id != 1233796714721317014:
                 load_dotenv(dotenv_path="envs/settings.env", override=True)  # Laden der Umgebungsvariablen mit Überschreiben
@@ -182,7 +189,7 @@ class ClientAI(commands.Cog):
                     return
             question = message.content.replace(f"<@{self.bot.user.id}>", "").strip()
             if question:
-                answer = await self.ask_openai(question)
+                answer = await self.ask_openai(message.author.name, question)
                 await self.send_long_message(message.channel, answer)
 
 def setupClientAI(bot):

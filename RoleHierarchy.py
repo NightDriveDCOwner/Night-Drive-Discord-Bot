@@ -18,7 +18,7 @@ class rolehierarchy:
             ]
             self.logger = logging.getLogger("rolehierarchy")
             logging_level = os.getenv("LOGGING_LEVEL", "INFO").upper() 
-            self.logger.setLevel(logging_level)
+            self.logger.setLevel(logging_level)            
                         
             if not self.logger.handlers:
                 formatter = logging.Formatter('[%(asctime)s - %(name)s - %(levelname)s]: %(message)s')
@@ -26,19 +26,25 @@ class rolehierarchy:
                 handler.setFormatter(formatter)
                 self.logger.addHandler(handler)
 
-
+        async def on_ready(self):
+            self.logger.debug("Rolehierarchy is ready.")
+            
         def has_role_or_higher(self, member: disnake.Member, role_name: str) -> bool:
             try:
-                target_role_index = self.role_hierarchy.index(role_name)
-            except ValueError:
-                return False
+                try:
+                    target_role_index = self.role_hierarchy.index(role_name)
+                except ValueError:
+                    return False
 
-            for role in member.roles:
-                if role.name in self.role_hierarchy:
-                    member_role_index = self.role_hierarchy.index(role.name)
-                    if member_role_index >= target_role_index:
-                        return True
-            return False
+                for role in member.roles:
+                    if role.name in self.role_hierarchy:
+                        member_role_index = self.role_hierarchy.index(role.name)
+                        if member_role_index >= target_role_index:
+                            return True
+                return False
+            except Exception as e:
+                self.logger.error(f"Error in has_role_or_higher: {e}")
+                return False
 
         async def check_role(self, inter: disnake.ApplicationCommandInteraction, member: disnake.Member, role_name: str):
             """

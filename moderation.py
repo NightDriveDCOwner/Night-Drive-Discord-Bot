@@ -3,15 +3,17 @@ from disnake.ext import commands
 from globalfile import Globalfile
 import logging
 from dbconnection import DatabaseConnection
-from rolehierarchy import rolehierarchy
 import sqlite3
-from datetime import datetime, timedelta, timedelta, date, timezone
+from datetime import datetime, timedelta, timedelta
 import asyncio
-
+from exceptionhandler import exception_handler
+from rolehierarchy import rolehierarchy
+import rolehierarchy
+from rolemanager import RoleManager
 
 
 class Moderation(commands.Cog):
-    def __init__(self, bot: commands.Bot):
+    def __init__(self, bot: commands.Bot, role_manager: RoleManager):
         self.bot = bot
         self.message = disnake.message
         self.userid = int
@@ -21,7 +23,11 @@ class Moderation(commands.Cog):
         self.globalfile = Globalfile(bot)  
         self.db: sqlite3.Connection = DatabaseConnection()
         self.cursor: sqlite3.Cursor = self.db.connection.cursor()
-                
+        self.role_hierarchy = rolehierarchy.rolehierarchy()
+        self.team_roles = [role for role in self.role_hierarchy.role_hierarchy]
+        self.role_cache = {}
+        self.role_manager = role_manager
+
         if not self.logger.handlers:
             formatter = logging.Formatter('[%(asctime)s - %(name)s - %(levelname)s]: %(message)s')
             handler = logging.StreamHandler()
@@ -36,13 +42,31 @@ class Moderation(commands.Cog):
                 IMAGEPATH TEXT
             )
         """)
-        self.db.connection.commit()               
+        self.db.connection.commit()     
+        self.cursor.execute("""
+            CREATE TABLE IF NOT EXISTS TEAM_MEMBERS (
+                ID INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+                USERID INTEGER NOT NULL,
+                ROLE TEXT NOT NULL,
+                TEAM_ROLE BOOLEAN NOT NULL,
+                FOREIGN KEY (USERID) REFERENCES USER(ID),
+                UNIQUE (USERID, ROLE)
+            )
+        """)
+        self.db.connection.commit()
 
+    @commands.Cog.listener()
+    async def on_ready(self):
+        self.logger.debug("Bot is ready.")
+        await self.sync_team_members()
+
+    @exception_handler
     def add_user_to_badwords_times(user_id: int):
         expiry_time = time.time() + 24 * 60 * 60 # 24 Stunden ab jetzt
         with open('badwords_times.txt', 'a', encoding='utf-8') as file:
             file.write(f"{user_id},{expiry_time}\n")
 
+    @exception_handler
     def is_user_banned_from_badwords(self, user_id: int) -> bool:
         current_time = time.time()
         file_path = 'updated_badwords_times.txt'  # Geänderter Dateipfad
@@ -56,6 +80,7 @@ class Moderation(commands.Cog):
                     return True
         return False      
 
+    @exception_handler
     async def delete_message_by_id(self, channel_id: int, message_id: int):
         channel = self.bot.get_channel(channel_id)
         if channel is None:
@@ -70,6 +95,7 @@ class Moderation(commands.Cog):
 
         self.logger.warning(f"Nachricht mit ID {message_id} nicht gefunden.")    
 
+    @exception_handler
     async def check_message_for_badwords(self, message: disnake.Message):
         self.message = message
         self.userid = message.author.id
@@ -122,6 +148,7 @@ class Moderation(commands.Cog):
                     await message.delete()
                     await notification_channel.send(embed=embed)
 
+    @exception_handler
     @commands.Cog.listener()
     async def on_button_click(self, interaction: disnake.MessageInteraction):
         embed = disnake.Embed(title="Blacklist Verstoß", description="Ein Benutzer hat ein Blacklist verwendet.", color=0xff0000)
@@ -134,10 +161,9 @@ class Moderation(commands.Cog):
             await interaction.message.delete()
             await interaction.response.send_message("Nachricht gelöscht.", ephemeral=True)
             self.message.delete(self.channelid, self.messageid)
-            
-    @commands.slash_command(guild_ids=[854698446996766730])
-    @rolehierarchy.check_permissions("Senior Supporter")
-    async def timeout(self, inter: disnake.ApplicationCommandInteraction, 
+
+    @exception_handler            
+    async def _timeout(self, inter: disnake.ApplicationCommandInteraction, 
                         member: disnake.Member, 
                         duration: str = commands.Param(name="dauer", description="Dauer des Timeouts in Sek., Min., Std., Tagen oder Jahre.(Bsp.: 0s0m0h0d0j)"),
                         reason: str = commands.Param(name="begründung", description="Grund für den Timeout", default="Kein Grund angegeben"),
@@ -152,7 +178,7 @@ class Moderation(commands.Cog):
             await inter.edit_original_response(content="Die Timeout-Dauer muss zwischen 60 Sekunden und 28 Tagen liegen.")
             return
 
-        timeout_end_time = self.globalfile.get_current_time() + timedelta(seconds=duration_seconds)
+        timeout_end_time = (await self.globalfile.get_current_time()) + timedelta(seconds=duration_seconds)
 
         try:
             await member.timeout(duration=timedelta(seconds=duration_seconds), reason=reason)            
@@ -166,7 +192,7 @@ class Moderation(commands.Cog):
 
             # Speichere den Timeout in der Datenbank
             cursor = self.db.connection.cursor()
-            current_datetime = self.globalfile.get_current_time().strftime('%Y-%m-%d %H:%M:%S')
+            current_datetime = (await self.globalfile.get_current_time()).strftime('%Y-%m-%d %H:%M:%S')
             cursor.execute("INSERT INTO TIMEOUT (USERID, REASON, TIMEOUTTO) VALUES (?, ?, ?)", (member.id, reason, timeout_end_time.strftime('%Y-%m-%d %H:%M:%S')))
             self.db.connection.commit()
 
@@ -183,10 +209,10 @@ class Moderation(commands.Cog):
                 return
 
             avatar_url = member.avatar.url if member.avatar else member.default_avatar.url
-            userrecord = self.globalfile.get_user_record(discordid=member.id)
+            userrecord = await self.globalfile.get_user_record(discordid=member.id)
 
             cursor = self.db.connection.cursor()
-            current_datetime = self.globalfile.get_current_time().strftime('%Y-%m-%d %H:%M:%S')
+            current_datetime = (await self.globalfile.get_current_time()).strftime('%Y-%m-%d %H:%M:%S')
             cursor.execute("INSERT INTO WARN (USERID, REASON, LEVEL, INSERTDATE) VALUES (?, ?, ?, ?)", (userrecord['ID'], reason, warn_level, current_datetime))
             self.db.connection.commit()
 
@@ -205,7 +231,7 @@ class Moderation(commands.Cog):
                 user_embed.set_author(name=member.name, icon_url=avatar_url)
                 user_embed.add_field(name="Grund", value=reason, inline=False)
                 user_embed.add_field(name="Warnlevel", value=str(warn_level), inline=False)
-                user_embed.set_footer(text=f"ID: {member.id} - heute um {(self.globalfile.get_current_time().strftime('%H:%M:%S'))} Uhr")
+                user_embed.set_footer(text=f"ID: {member.id} - heute um {((await self.globalfile.get_current_time()).strftime('%H:%M:%S'))} Uhr")
                 await member.send(embed=user_embed)
             except Exception as e:
                 await inter.edit_original_response(content=f"Fehler beim Senden der Warn-Nachricht: {e}")
@@ -215,13 +241,12 @@ class Moderation(commands.Cog):
             warn_embed.set_author(name=member.name, icon_url=avatar_url)
             warn_embed.add_field(name="Grund", value=reason, inline=False)
             warn_embed.add_field(name="Warnlevel", value=str(warn_level), inline=False)
-            warn_embed.set_footer(text=f"ID: {member.id} - heute um {(self.globalfile.get_current_time().strftime('%H:%M:%S'))} Uhr")
+            warn_embed.set_footer(text=f"ID: {member.id} - heute um {((await self.globalfile.get_current_time()).strftime('%H:%M:%S'))} Uhr")
             await inter.edit_original_response(embed=warn_embed)
             self.logger.info(f"Warn for User {member.name} (ID: {member.id}) created by {inter.user.name} (ID: {inter.user.id})")
 
-    @commands.slash_command(guild_ids=[854698446996766730])
-    @rolehierarchy.check_permissions("Moderator")
-    async def timeout_remove(self, inter: disnake.ApplicationCommandInteraction, timeout_id: int, reason: str = commands.Param(name="begründung", description="Grund für das Entfernen des Timeouts", default="Kein Grund angegeben")):
+    @exception_handler
+    async def _timeout_remove(self, inter: disnake.ApplicationCommandInteraction, timeout_id: int, reason: str = commands.Param(name="begründung", description="Grund für das Entfernen des Timeouts", default="Kein Grund angegeben")):
         """Entfernt einen Timeout basierend auf der Timeout ID."""
         await inter.response.defer()
 
@@ -251,9 +276,8 @@ class Moderation(commands.Cog):
         except disnake.HTTPException as e:
             await inter.edit_original_response(content=f"Ein Fehler ist aufgetreten: {e}")
 
-    @commands.slash_command(guild_ids=[854698446996766730])
-    @rolehierarchy.check_permissions("Test-Supporter")
-    async def warn_add(self, inter: disnake.ApplicationCommandInteraction, user: disnake.User, reason: str, level: int = 1, proof: disnake.Attachment = None, show: str = "True"):
+    @exception_handler
+    async def _warn_add(self, inter: disnake.ApplicationCommandInteraction, user: disnake.User, reason: str, level: int = 1, proof: disnake.Attachment = None, show: str = "True"):
         """Erstellt eine Warnung für einen Benutzer."""
         # Überprüfe, ob ein Attachment in der Nachricht vorhanden ist
         await inter.response.defer()               
@@ -268,10 +292,10 @@ class Moderation(commands.Cog):
         if proof:
             image_path = await Globalfile.save_image(proof, f"{user.id}")
 
-        userrecord = self.globalfile.get_user_record(discordid=user.id)            
+        userrecord = await self.globalfile.get_user_record(discordid=user.id)            
 
         cursor = self.db.connection.cursor()
-        current_datetime = self.globalfile.get_current_time().strftime('%Y-%m-%d %H:%M:%S')
+        current_datetime = (await self.globalfile.get_current_time()).strftime('%Y-%m-%d %H:%M:%S')
         cursor.execute("INSERT INTO WARN (USERID, REASON, IMAGEPATH, LEVEL, INSERTDATE) VALUES (?, ?, ?, ?, ?)", (userrecord['ID'], reason, image_path, level, current_datetime))
         self.db.connection.commit()
 
@@ -292,7 +316,7 @@ class Moderation(commands.Cog):
             user_embed.add_field(name="Warnlevel", value=str(level), inline=False)
             if image_path:
                 user_embed.add_field(name="Bildpfad", value=image_path, inline=False)
-            user_embed.set_footer(text=f"ID: {user.id} - heute um {(self.globalfile.get_current_time().strftime('%H:%M:%S'))} Uhr")
+            user_embed.set_footer(text=f"ID: {user.id} - heute um {((await self.globalfile.get_current_time()).strftime('%H:%M:%S'))} Uhr")
             await user.send(embed=user_embed)
         except Exception as e:
             await inter.edit_original_response(content=f"Fehler beim Senden der Warn-Nachricht: {e}")
@@ -304,12 +328,11 @@ class Moderation(commands.Cog):
         embed.add_field(name="Warnlevel", value=str(level), inline=False)
         if image_path:
             embed.add_field(name="Bildpfad", value=image_path, inline=False)
-        embed.set_footer(text=f"ID: {user.id} - heute um {(self.globalfile.get_current_time().strftime('%H:%M:%S'))} Uhr")
+        embed.set_footer(text=f"ID: {user.id} - heute um {((await self.globalfile.get_current_time()).strftime('%H:%M:%S'))} Uhr")
         await inter.edit_original_response(embed=embed)
-
-    @commands.slash_command(guild_ids=[854698446996766730])
-    @rolehierarchy.check_permissions("Moderator")
-    async def warn_delete(self, inter: disnake.ApplicationCommandInteraction, caseid: int):
+    
+    @exception_handler
+    async def _warn_delete(self, inter: disnake.ApplicationCommandInteraction, caseid: int):
         """Löscht eine Warn basierend auf der Warn ID und setzt das Warnlevel zurück."""
         await inter.response.defer()        
         try:
@@ -345,9 +368,8 @@ class Moderation(commands.Cog):
             await inter.edit_original_response(embed=embed)
             self.logger.critical(f"An error occurred: {e}")
 
-    @commands.slash_command(guild_ids=[854698446996766730])
-    @rolehierarchy.check_permissions("Supporter")                   
-    async def ban(self, 
+    @exception_handler
+    async def _ban(self, 
                 inter: disnake.ApplicationCommandInteraction, 
                 member: disnake.Member = commands.Param(name="benutzer", description="Der Benutzer, der gebannt werden soll."), 
                 reason: str = commands.Param(name="begründung", description="Grund warum der Benutzer gebannt werden soll", default="Kein Grund angegeben"),
@@ -361,7 +383,7 @@ class Moderation(commands.Cog):
             # Berechnen der Banndauer
             if duration != "0s":
                 duration_seconds = self.globalfile.convert_duration_to_seconds(duration)
-                ban_end_time = self.globalfile.get_current_time() + timedelta(seconds=duration_seconds)
+                ban_end_time = (await self.globalfile.get_current_time()) + timedelta(seconds=duration_seconds)
                 ban_end_timestamp = int(ban_end_time.timestamp())
                 ban_end_formatted = ban_end_time.strftime('%Y-%m-%d %H:%M:%S')
             else:
@@ -369,7 +391,7 @@ class Moderation(commands.Cog):
                 ban_end_timestamp = None
                 ban_end_formatted = "Unbestimmt"
 
-            userrecord = self.globalfile.get_user_record(discordid=member.id)
+            userrecord = await self.globalfile.get_user_record(discordid=member.id)
 
             cursor = self.db.connection.cursor()
             cursor.execute("SELECT * FROM BAN WHERE USERID = ?", (userrecord['ID'],))
@@ -413,10 +435,10 @@ class Moderation(commands.Cog):
                         else:
                             image_path = await self.globalfile.save_image(proof, f"{member.id}_{duration_seconds}")
                     
-                    userrecord = self.globalfile.get_user_record(discordid=inter.user.id)
+                    userrecord = await self.globalfile.get_user_record(discordid=inter.user.id)
                     user_id = userrecord['ID']
-                    userrecord = self.globalfile.get_user_record(discordid=member.id)
-                    current_datetime = self.globalfile.get_current_time().strftime('%Y-%m-%d %H:%M:%S')
+                    userrecord = await self.globalfile.get_user_record(discordid=member.id)
+                    current_datetime = (await self.globalfile.get_current_time()).strftime('%Y-%m-%d %H:%M:%S')
                     cursor.execute(
                         "INSERT INTO BAN (USERID, REASON, BANNEDTO, DELETED_DAYS, IMAGEPATH, INSERTEDDATE, BANNEDBY) VALUES (?, ?, ?, ?, ?, ?, ?)",
                         (userrecord['ID'], reason, ban_end_timestamp, str(delete_days), image_path, current_datetime, user_id)
@@ -444,16 +466,15 @@ class Moderation(commands.Cog):
             await inter.edit_original_response(content="Der angegebene Benutzer wurde nicht gefunden.")
             self.logger.error(f"MemberNotFound: Der Benutzer mit der ID {member.id} wurde nicht gefunden.")
 
-    @commands.slash_command(guild_ids=[854698446996766730])
-    @rolehierarchy.check_permissions("Senior Supporter")
-    async def unban(self, inter: disnake.ApplicationCommandInteraction, 
+    @exception_handler
+    async def _unban(self, inter: disnake.ApplicationCommandInteraction, 
                     userid: int = commands.param(name="userid", description="Hier kannst du die UserID unserer Datenbank angeben.", default=0), 
                     username: str = commands.Param(name="username", description="Hier kannst du den Benutzernamen angeben, falls die UserID nicht bekannt ist.", default=""), 
                     reason: str = commands.Param(name="begruendung", description="Bitte gebe eine Begründung für den Unban an.", default="Kein Grund angegeben")):
         """Entbanne einen Benutzer von diesem Server."""
         await inter.response.defer()  # Verzögere die Interaktion und mache sie nur für den Benutzer sichtbar
         try:
-            userrecord = self.globalfile.get_user_record(user_id=userid,username=username)                
+            userrecord = await self.globalfile.get_user_record(user_id=userid,username=username)                
             user = await self.bot.fetch_user(int(userrecord['DISCORDID']))        
 
             # Überprüfen, ob ein offener Ban existiert
@@ -486,9 +507,8 @@ class Moderation(commands.Cog):
             self.logger.critical(f"An error occurred: {e}")
             await inter.edit_original_response(content=f"Ein Fehler ist aufgetreten: {e}")            
 
-    @commands.slash_command(guild_ids=[854698446996766730])
-    @rolehierarchy.check_permissions("Supporter")
-    async def kick(self, 
+    @exception_handler
+    async def _kick(self, 
                 inter: disnake.ApplicationCommandInteraction, 
                 member: disnake.Member = commands.Param(name="benutzer", description="Der Benutzer, der gekickt werden soll."), 
                 reason: str = commands.Param(name="begründung", description="Grund warum der Benutzer gekickt werden soll", default="Kein Grund angegeben"),
@@ -528,9 +548,8 @@ class Moderation(commands.Cog):
 
             await inter.edit_original_response(embed=embed)
 
-    @commands.slash_command(guild_ids=[854698446996766730])
-    @commands.has_permissions(manage_messages=True)
-    async def delete_messages_after(self, inter: disnake.ApplicationCommandInteraction, 
+    @exception_handler
+    async def _delete_messages_after(self, inter: disnake.ApplicationCommandInteraction, 
                                     channel: disnake.TextChannel = commands.Param(name="channel", description="Der Kanal, in dem die Nachrichten gelöscht werden sollen."),
                                     timestamp: str = commands.Param(name="timestamp", description="Der Zeitpunkt (im Format YYYY-MM-DD HH:MM:SS) nach dem die Nachrichten gelöscht werden sollen.")):
         """Lösche alle Nachrichten in einem Kanal nach einer bestimmten Uhrzeit."""
@@ -559,6 +578,7 @@ class Moderation(commands.Cog):
 
         await inter.edit_original_response(content=f"{deleted_messages} Nachrichten wurden gelöscht.")
 
+    @exception_handler
     async def delete_messages_background(self, guild: disnake.Guild, member: disnake.Member, days: int):
         """Löscht Nachrichten eines bestimmten Mitglieds aus allen Kanälen, die innerhalb der angegebenen Anzahl von Tagen geschrieben wurden."""
         delete_after = datetime.utcnow() - timedelta(days=days)
@@ -573,5 +593,87 @@ class Moderation(commands.Cog):
                     except disnake.HTTPException as e:
                         print(f"Fehler beim Löschen von Nachrichten in {channel.name}: {e}")
 
-def setupModeration(bot: commands.Bot):
-    bot.add_cog(Moderation(bot))                
+    @commands.Cog.listener()
+    async def on_member_update(self, before: disnake.Member, after: disnake.Member):
+        # Überprüfe, ob sich die Rollen geändert haben
+        if before.roles != after.roles:
+            # Extrahiere die Rollen-IDs
+            before_roles = set(role.id for role in before.roles)
+            after_roles = set(role.id for role in after.roles)
+
+            # Neue Rollen, die hinzugefügt wurden
+            added_roles = after_roles - before_roles
+            # Rollen, die entfernt wurden
+            removed_roles = before_roles - after_roles
+
+            # Aktualisiere die Datenbank für hinzugefügte Rollen
+            for role_id in added_roles:
+                role_name = self.role_manager.get_role_name(role_id)
+                if role_name and role_name in self.team_roles:
+                    self.cursor.execute("""
+                        INSERT INTO TEAM_MEMBERS (USERID, ROLE, TEAM_ROLE)
+                        VALUES (?, ?, ?)
+                        ON CONFLICT(USERID, ROLE) DO UPDATE SET TEAM_ROLE=excluded.TEAM_ROLE
+                    """, (after.id, role_name, True))
+                    self.db.connection.commit()
+                    self.logger.info(f"Role {role_name} added to user {after.id} in TEAM_MEMBERS table.")
+
+            # Aktualisiere die Datenbank für entfernte Rollen
+            for role_id in removed_roles:
+                role_name = self.role_manager.get_role_name(role_id)
+                if role_name and role_name in self.team_roles:
+                    self.cursor.execute("""
+                        DELETE FROM TEAM_MEMBERS WHERE USERID = ? AND ROLE = ?
+                    """, (after.id, role_name))
+                    self.db.connection.commit()
+                    self.logger.info(f"Role {role_name} removed from user {after.id} in TEAM_MEMBERS table.")
+
+    @exception_handler
+    async def sync_team_members(self):
+        """Synchronize the TEAM_MEMBERS table with the current roles of members."""
+        # Fetch all current team members from the database
+        self.cursor.execute("SELECT USERID, ROLE FROM TEAM_MEMBERS")
+        db_team_members = self.cursor.fetchall()
+
+        # Create a set of current team members from the database
+        db_team_members_set = {(user_id, role) for user_id, role in db_team_members}
+
+        # Create a set of current team members from the server
+        server_team_members_set = set()
+        for guild in self.bot.guilds:
+            for member in guild.members:
+                for role in member.roles:
+                    role_name = self.role_manager.get_role_name(role.id)
+                    if role_name and role_name in self.team_roles:
+                        # Fetch USERID from USER table using get_user_record
+                        user_record = await self.globalfile.get_user_record(discordid=member.id)
+                        if user_record:
+                            user_id = user_record['ID']
+                            server_team_members_set.add((user_id, role_name))
+
+        # Determine which members need to be added or removed
+        members_to_add = server_team_members_set - db_team_members_set
+        members_to_remove = db_team_members_set - server_team_members_set
+
+        # Add new members to the database
+        for user_id, role_name in members_to_add:
+            self.cursor.execute("""
+                INSERT OR IGNORE INTO TEAM_MEMBERS (USERID, ROLE, TEAM_ROLE)
+                VALUES (?, ?, ?)
+            """, (user_id, role_name, True))
+            self.cursor.execute("""
+                UPDATE TEAM_MEMBERS SET TEAM_ROLE = ? WHERE USERID = ? AND ROLE = ?
+            """, (True, user_id, role_name))
+            self.db.connection.commit()
+            self.logger.info(f"Role {role_name} added to user {user_id} in TEAM_MEMBERS table.")
+
+        # Remove members from the database
+        for user_id, role_name in members_to_remove:
+            self.cursor.execute("""
+                DELETE FROM TEAM_MEMBERS WHERE USERID = ? AND ROLE = ?
+            """, (user_id, role_name))
+            self.db.connection.commit()
+            self.logger.info(f"Role {role_name} removed from user {user_id} in TEAM_MEMBERS table.")
+
+def setupModeration(bot: commands.Bot, role_manager: RoleManager):
+    bot.add_cog(Moderation(bot, role_manager))           

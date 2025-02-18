@@ -1,4 +1,4 @@
-import disnake, os, logging
+import disnake, os, logging, threading
 import disnake.audit_logs
 from disnake.ext import commands, tasks
 from datetime import datetime, timedelta, timedelta, timezone, time
@@ -8,7 +8,8 @@ import pytz
 import re
 from typing import Union
 from dbconnection import DatabaseConnection
-
+import sqlite3
+from exceptionhandler import exception_handler
 
 class Globalfile(commands.Cog):
     _instance = None
@@ -23,11 +24,13 @@ class Globalfile(commands.Cog):
             self.user_data = {}
             self.TimerMustReseted = True
             self.UserRecord = namedtuple('UserRecord', ['user','username','userid'])
-            self.db = DatabaseConnection()             
+            self.db = DatabaseConnection()      
+            self.cursor: sqlite3.Cursor = self.db.connection.cursor()         
         
         logging_level = os.getenv("LOGGING_LEVEL", "INFO").upper()                    
         self.logger = logging.getLogger("Globalfile")
-        self.logger.setLevel(logging_level)           
+        self.logger.setLevel(logging_level)      
+        self.self_reveal_channel = None     
 
         # Überprüfen, ob der Handler bereits hinzugefügt wurde
         if not self.logger.handlers:
@@ -36,13 +39,23 @@ class Globalfile(commands.Cog):
             handler.setFormatter(formatter)
             self.logger.addHandler(handler)
 
+    async def on_ready(self):
+        self.self_reveal_channel = self.bot.get_channel(1061444217076994058)
         if not self.unban_task.is_running():
             self.unban_task.start()
         if not self.check_warn_levels.is_running():
             self.check_warn_levels.start()        
         if not self.check_birthdays.is_running():
             self.check_birthdays.start()              
+        if not self.archive_old_threads.is_running():
+            self.archive_old_threads.start()            
+        self.logger.debug(f"{self.__class__.__name__} Cog geladen.")        
+        self.logger.debug(f"Check Birthday is running: {self.check_birthdays.is_running()}")
+        self.logger.debug(f"Archive old threads is running: {self.archive_old_threads.is_running()}")
+        self.logger.debug(f"Check warn levels is running: {self.check_warn_levels.is_running()}")
+        self.logger.debug(f"Unban Task is running: {self.unban_task.is_running()}")
 
+    @exception_handler
     def convert_duration_to_seconds(self, duration: str) -> int:
         """Konvertiere eine Zeitangabe in Sekunden."""
         seconds = 0
@@ -60,7 +73,8 @@ class Globalfile(commands.Cog):
             elif unit == 'j':
                 seconds += int(value) * 31536000 # Ein Jahr hat etwa 365 Tage
         return seconds
-    
+
+    @exception_handler    
     def calculate_future_time(self, seconds: int) -> str:
         """Berechne die zukünftige Zeit basierend auf der aktuellen Zeit und einer Anzahl von Sekunden."""
         now: datetime.now
@@ -99,7 +113,7 @@ class Globalfile(commands.Cog):
                 ban_end_timestamp = float(ban_end_timestamp)
                 # Konvertiere den Unix-Timestamp in ein datetime-Objekt
                 ban_end_datetime = datetime.fromtimestamp(ban_end_timestamp, tz=timezone.utc)
-                current_time = self.get_current_time()
+                current_time = await self.get_current_time()
                 if current_time > ban_end_datetime:
                     # Banndauer ist abgelaufen, Benutzer entbannen
                     guild = self.bot.get_guild(854698446996766730)  # Ersetzen Sie dies durch die tatsächliche ID Ihres Servers
@@ -124,11 +138,12 @@ class Globalfile(commands.Cog):
                     except Exception as e:
                         self.logger.error(f"Fehler beim Entbannen von User {user_id} mit DiscordID {discordid}: {e}")
 
-    def get_user_record(self, user_id: int = None, username: str = "", discordid: str = "") -> dict:
+    @exception_handler
+    async def get_user_record(self, user_id: int = None, username: str = "", discordid = "") -> dict:
         """Holt die ID, den Benutzernamen und die Discord-ID des Datensatzes aus der Tabelle User basierend auf Benutzername und User ID."""
         cursor = self.db.connection.cursor()
         query = "SELECT ID, USERNAME, DISCORDID FROM USER WHERE USERNAME = ? OR DISCORDID = ? OR ID = ?"
-        cursor.execute(query, (username, discordid, user_id))
+        cursor.execute(query, (username, str(discordid), user_id))
         results = cursor.fetchall()
 
         if len(results) > 2:
@@ -143,19 +158,22 @@ class Globalfile(commands.Cog):
             }
         return None
 
+    @exception_handler
     def reset_timer(self):
         asyncio.create_task(self.clear_user_data_after_6_minutes())
 
+    @exception_handler
     async def clear_user_data_after_6_minutes(self):
         await asyncio.sleep(6 * 60)
         self.user_data.clear()
         self.TimerMustReseted = True   
 
+    @exception_handler
     async def admin_did_something(self, action: disnake.AuditLogAction, handleduser: Union[disnake.User, disnake.Member]):
         DeletedbyAdmin = False
         guild = self.bot.get_guild(854698446996766730)
-        async for entry in guild.audit_logs(limit=5, action=action, after=datetime.now() - timedelta(minutes=5)):                                            
-            if action == disnake.AuditLogAction.message_delete or action == disnake.AuditLogAction.member_disconnect:
+        async for entry in guild.audit_logs(limit=5, action=action, after=datetime.now() - timedelta(minutes=5)):
+            if action in [disnake.AuditLogAction.message_delete, disnake.AuditLogAction.member_disconnect]:
                 if entry.extra.count is not None:
                     if self.TimerMustReseted:
                         self.reset_timer()
@@ -165,15 +183,15 @@ class Globalfile(commands.Cog):
                             self.user_data[entry.user.id] = entry.extra.count
                             DeletedbyAdmin = True
                             break
-                        else: 
-                            DeletedbyAdmin = False                        
+                        else:
+                            DeletedbyAdmin = False
                             break
                     else:
                         self.user_data[entry.user.id] = entry.extra.count
                         DeletedbyAdmin = True
-                        break  
+                        break
                 else:
-                    DeletedbyAdmin = False                                
+                    DeletedbyAdmin = False
                     break
             else:
                 if self.TimerMustReseted:
@@ -183,9 +201,9 @@ class Globalfile(commands.Cog):
                     self.user_data[entry.user.id] = 1
                 self.user_data[entry.user.id] += 1
                 DeletedbyAdmin = True
-                break  
+                break
 
-        if action == disnake.AuditLogAction.message_delete or action == disnake.AuditLogAction.member_disconnect or action == disnake.AuditLogAction.member_update:
+        if action in [disnake.AuditLogAction.message_delete, disnake.AuditLogAction.member_disconnect, disnake.AuditLogAction.member_update]:
             if DeletedbyAdmin:
                 user = entry.user
                 username = user.name
@@ -193,15 +211,22 @@ class Globalfile(commands.Cog):
             else:
                 user = handleduser
                 username = handleduser.name
-                userid = handleduser.id     
-        return self.UserRecord(user,username,userid)  
+                userid = handleduser.id
+        else:
+            user = handleduser
+            username = handleduser.name
+            userid = handleduser.id
 
+        return self.UserRecord(user, username, userid)
+
+    @exception_handler
     async def log_audit_entry(self, logtype: str, userid: int, details: str):
         """Loggt einen Audit-Eintrag in die Datenbank."""
         cursor = self.db.connection.cursor()
         cursor.execute("INSERT INTO AUDITLOG (LOGTYPE, USERID, DETAILS) VALUES (?, ?, ?)", (logtype, userid, details))
         self.db.connection.commit()
-    
+  
+    @exception_handler  
     async def delete_message_by_id(self, channel_id: int, message_id: int):
         """Löscht eine Nachricht basierend auf ihrer ID in einem bestimmten Kanal."""
         try:
@@ -219,6 +244,7 @@ class Globalfile(commands.Cog):
         except Exception as e:
             self.logger.error(f"Ein Fehler ist aufgetreten: {e}")
 
+    @exception_handler
     async def delete_message_by_id_anywhere(self, message_id: int):
         """Versucht, eine Nachricht basierend auf ihrer ID in allen Kanälen zu finden und zu löschen."""
         for guild in self.bot.guilds:
@@ -238,6 +264,7 @@ class Globalfile(commands.Cog):
                     return # Ein anderer Fehler ist aufgetreten, also abbrechen
         self.logger.warning(f"Nachricht mit der ID {message_id} wurde nicht gefunden.")
 
+    @exception_handler
     def get_user_record_id(self, username: str = None, user_id: int = None) -> int:
             """Holt die ID des Datensatzes aus der Tabelle User basierend auf Benutzername und/oder User ID."""
             cursor = self.db.connection.cursor()
@@ -257,6 +284,7 @@ class Globalfile(commands.Cog):
             result = cursor.fetchone()
             return result[0] if result else None        
 
+    @exception_handler
     def get_message_record_id(self, message_id: int) -> int:
         """Holt die ID des Datensatzes aus der Tabelle Message basierend auf der Message ID."""
         cursor = self.db.connection.cursor()
@@ -265,6 +293,7 @@ class Globalfile(commands.Cog):
         result = cursor.fetchone()
         return result[0] if result else None
     
+    @exception_handler
     async def get_member_from_user(self, user: disnake.User, guild_id: int) -> Union[disnake.Member, None]:
         """Konvertiert einen disnake.User in einen disnake.Member, sofern der Benutzer Mitglied der Gilde ist."""
         guild = self.bot.get_guild(guild_id)
@@ -277,7 +306,7 @@ class Globalfile(commands.Cog):
     async def check_warn_levels(self):
         """Überprüft das Warnlevel jedes Benutzers und reduziert es, wenn die letzte Warnung länger als 4 Monate zurückliegt."""
         cursor = self.db.connection.cursor()
-        four_months_ago = self.get_current_time() - timedelta(days=4*30)  # Annahme: 1 Monat = 30 Tage
+        four_months_ago = await self.get_current_time() - timedelta(days=4*30)  # Annahme: 1 Monat = 30 Tage
 
         # Hole alle Benutzer, deren Warnlevel angepasst werden muss
         cursor.execute("""
@@ -307,7 +336,7 @@ class Globalfile(commands.Cog):
                     if not warnlevel_adjusted or datetime.strptime(warnlevel_adjusted, '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc) < four_months_ago:
                         # Reduziere das Warnlevel um 1
                         new_warn_level = max(0, warn_level - 1)
-                        current_time = self.get_current_time().strftime('%Y-%m-%d %H:%M:%S')
+                        current_time = await self.get_current_time().strftime('%Y-%m-%d %H:%M:%S')
                         cursor.execute("""
                             UPDATE USER
                             SET WARNLEVEL = ?, WARNLEVEL_ADJUSTED = ?
@@ -354,7 +383,8 @@ class Globalfile(commands.Cog):
                         cursor.execute("UPDATE USER SET TOTALVOICEMIN = TOTALVOICEMIN + 1 WHERE ID = ?", (userrecord['ID'],))
             self.db.connection.commit()
 
-    def get_current_time(self):
+    @exception_handler
+    async def get_current_time(self):
         """Gibt die aktuelle Zeit in der deutschen Zeitzone zurück."""
         german_timezone = pytz.timezone('Europe/Berlin')
         return datetime.now(german_timezone)
@@ -363,7 +393,7 @@ class Globalfile(commands.Cog):
     async def check_birthdays(self):
         """Überprüft täglich um 12 Uhr, ob ein Benutzer Geburtstag hat."""
         cursor = self.db.connection.cursor()
-        today = self.get_current_time().date()
+        today = await self.get_current_time().date()
 
         cursor.execute("SELECT DISCORDID, USERNAME FROM USER WHERE strftime('%m-%d', BIRTHDAY) = ?", (today.strftime('%m-%d'),))
         birthday_users = cursor.fetchall()
@@ -412,6 +442,7 @@ class Globalfile(commands.Cog):
                     else:
                         self.logger.warning(f"Benutzer {username} ({discord_id}) ist nicht auf dem Server.")
 
+    @exception_handler
     async def delete_user_data(self, user_id):
         # Lösche alle Antworten des Benutzers
         self.cursor.execute("DELETE FROM ANSWER WHERE USERID = ?", (user_id,))
@@ -421,7 +452,8 @@ class Globalfile(commands.Cog):
         
         self.db.connection.commit()
     
-    def get_emoji_by_name(self, emoji_name: str) -> Union[disnake.Emoji, disnake.PartialEmoji, None]:
+    @exception_handler
+    async def get_emoji_by_name(self, emoji_name: str) -> Union[disnake.Emoji, disnake.PartialEmoji, None]:
         # Check custom emojis in the guild
         guild : disnake.Guild = self.bot.get_guild(854698446996766730)
         for emoji in guild.emojis:
@@ -434,7 +466,8 @@ class Globalfile(commands.Cog):
         except ValueError:
             return None
         
-    def get_emoji_string_by_name(self, emoji_name: str) -> Union[str, None]:
+    @exception_handler
+    async def get_emoji_string_by_name(self, emoji_name: str) -> Union[str, None]:
         # Check custom emojis in the guild
         guild: disnake.Guild = self.bot.get_guild(854698446996766730)
         for emoji in guild.emojis:
@@ -448,8 +481,10 @@ class Globalfile(commands.Cog):
         except ValueError:
             return None        
         
-    def get_manual_emoji(self, emoji_name: str) -> disnake.Emoji:
+    @exception_handler
+    async def get_manual_emoji(self, emoji_name: str) -> disnake.Emoji:
         emoji_dict = {
+            "new": "🆕",
             "incoming_envelope": "📨",
             "keycap_ten": "🔟",
             "capital_abcd": "🔠",
@@ -943,5 +978,18 @@ class Globalfile(commands.Cog):
         }
         return emoji_dict.get(emoji_name, None)        
     
+    @tasks.loop(time=time(hour=0, minute=0, second=0, tzinfo=pytz.timezone('Europe/Berlin')))
+    async def archive_old_threads(self):
+        """Archiviert Threads im self_reveal_channel, die älter als 7 Tage sind."""
+        if self.self_reveal_channel:
+            if self.self_reveal_channel:
+                current_time = await self.get_current_time()
+                seven_days_ago = current_time - timedelta(days=7)
+
+                for thread in self.self_reveal_channel.threads:
+                    if thread.created_at < seven_days_ago:
+                        await thread.edit(archived=True)
+                        self.logger.info(f"Thread {thread.name} wurde archiviert, da er älter als 7 Tage ist.")
+
 def setupGlobal(bot):
     bot.add_cog(Globalfile(bot))

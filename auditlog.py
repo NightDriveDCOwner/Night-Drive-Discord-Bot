@@ -11,6 +11,7 @@ from datetime import datetime
 from collections import namedtuple
 from typing import Union
 
+
 class AuditLog(commands.Cog):
     # Audit Log Action Types
     GUILD_UPDATE = disnake.AuditLogAction.guild_update
@@ -61,13 +62,12 @@ class AuditLog(commands.Cog):
     THREAD_UPDATE = disnake.AuditLogAction.thread_update
     THREAD_DELETE = disnake.AuditLogAction.thread_delete
 
-    def __init__(self, bot):
+    def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.logger = logging.getLogger("AuditLog")
         logging_level = os.getenv("LOGGING_LEVEL", "INFO").upper() 
         self.logger.setLevel(logging_level)
 
-        # Überprüfen, ob der Handler bereits hinzugefügt wurde
         if not self.logger.handlers:
             formatter = logging.Formatter('[%(asctime)s - %(name)s - %(levelname)s]: %(message)s')
             handler = logging.StreamHandler()
@@ -92,16 +92,6 @@ class AuditLog(commands.Cog):
         self.user_data = {}
         self.TimerMustReseted = True
         self.UserRecord = namedtuple('UserRecord', ['user', 'username', 'userid'])
-
-    def get_current_time(self):
-        """Gibt die aktuelle Zeit in der deutschen Zeitzone zurück."""
-        german_timezone = pytz.timezone('Europe/Berlin')
-        return datetime.now(german_timezone)
-
-    def reset_timer(self):
-        """Setzt den Timer zurück."""
-        self.user_data.clear()
-        self.TimerMustReseted = True
 
     async def send_audit_log_embed(self, action: disnake.AuditLogAction, entry: disnake.AuditLogEntry):
         thumbnail_url = None
@@ -136,8 +126,6 @@ class AuditLog(commands.Cog):
         after = entry.changes.after if entry.changes.after is not None else "N/A"
         if action == disnake.AuditLogAction.member_update:
             changes_str += f"**{key}**:\nBefore: {before}\nAfter: {after}\n\n"
-        elif action == disnake.AuditLogAction.role_update:
-            changes_str += f"**Role {key}**:\nBefore: {before}\nAfter: {after}\n\n"
         elif action == disnake.AuditLogAction.channel_create:
             changes_str += f"**Channel Created**:\nName: {after}\n\n"
         elif action == disnake.AuditLogAction.channel_update:
@@ -162,8 +150,11 @@ class AuditLog(commands.Cog):
             changes_str += f"**Invite {key}**:\nBefore: {before}\nAfter: {after}\n\n"
         elif action == disnake.AuditLogAction.invite_delete:
             changes_str += f"**Invite Deleted**:\nCode: {before}\n\n"
+        elif action == disnake.AuditLogAction.member_role_update:
+            return
         else:
             changes_str += f"**{key}**:\nBefore: {before}\nAfter: {after}\n\n"
+        
         embed.add_field(name="Changes", value=changes_str, inline=False)
 
         channel = entry.guild.get_channel(int(self.channel_id))

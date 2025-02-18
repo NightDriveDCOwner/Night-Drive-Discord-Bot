@@ -7,7 +7,7 @@ import os
 import re
 
 class Countbot(commands.Cog):
-    def __init__(self, bot):
+    def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.logger = logging.getLogger("CountingBot")
         logging_level = os.getenv("LOGGING_LEVEL", "INFO").upper() 

@@ -41,3 +41,44 @@ class DatabaseConnection:
             self.logger.error(f"Error: '{err}'")
         finally:
             cursor.close()
+
+    def create_tables(self):
+        tables = [
+            """
+            CREATE TABLE IF NOT EXISTS TIMEOUT (
+                ID INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+                USERID STRING,
+                REASON TEXT,
+                TIMEOUTTO TEXT,
+                IMAGEPATH TEXT,
+                REMOVED INTEGER DEFAULT 0,
+                REMOVEDBY INTEGER DEFAULT 0,
+                REMOVEDREASON TEXT
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS BAN (
+                ID INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+                USERID STRING,
+                BANNEDTO TEXT,
+                UNBAN INTEGER DEFAULT 0
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS BLACKLIST (
+                ID INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+                WORD STRING
+            )
+            """
+            # Fügen Sie hier weitere SQL-Anweisungen für andere Tabellen hinzu
+        ]
+
+        cursor = self._connection.cursor()
+        try:
+            for table in tables:
+                cursor.execute(table)
+            self._connection.commit()
+        except Exception as err:
+            self.logger.error(f"Error creating tables: '{err}'")
+        finally:
+            cursor.close()            
