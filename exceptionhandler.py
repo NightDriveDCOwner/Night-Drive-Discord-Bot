@@ -3,12 +3,14 @@ import os
 import inspect
 from functools import wraps
 import disnake
+import traceback
 
 def exception_handler(func):
     @wraps(func)
     async def wrapper(*args, **kwargs):
         # Dynamisch den Logger basierend auf dem Namen der aufrufenden Funktion setzen
         caller_class = inspect.getmodule(func).__name__
+        method_name = func.__name__
         logger = logging.getLogger(caller_class)
         logging_level = os.getenv("LOGGING_LEVEL", "INFO").upper()
         logger.setLevel(logging_level)
@@ -22,7 +24,8 @@ def exception_handler(func):
         try:
             return await func(*args, **kwargs)
         except Exception as e:
-            logger.error(f"An error occurred: {e}")
+            logger.error(f"An error occurred in {method_name}: {e}")
+            logger.error(traceback.format_exc())  # Logge den vollständigen Traceback
             # Optional: Sende eine Nachricht an den Benutzer, falls 'inter' vorhanden ist
             if len(args) > 1 and hasattr(args[1], 'edit_original_response'):
                 inter = args[1]
@@ -33,5 +36,5 @@ def exception_handler(func):
             user_id = int(461969832074543105)  # Setze die User-ID in der .env-Datei
             user = await bot.fetch_user(user_id)
             if user:
-                await user.send(f"An error occurred in {caller_class}: {e}")
+                await user.send(f"An error occurred in {caller_class}.{method_name}: {e}")
     return wrapper

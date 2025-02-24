@@ -22,48 +22,56 @@ from dotenv import load_dotenv
 import requests
 import time
 from rolemanager import RoleManager
+from channelmanager import ChannelManager
+
 
 class Startup:
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.role_manager = RoleManager(bot)
+        self.rolemanager = RoleManager(bot)
+        self.channelmanager = ChannelManager(bot)
 
     async def on_ready(self):
         logger.info("Bot is ready. Caching roles...")
-        await self.role_manager.cache_roles()
+        await self.rolemanager.cache_roles()
+        await self.channelmanager.cache_channels()
         logger.info("Roles cached. Setting up extensions...")
-        setupGlobal(self.bot)
-        setupTicket(self.bot)
-        setupModeration(self.bot, self.role_manager)
-        setupJoin(self.bot)
-        setupVoice(self.bot)
-        setupReaction(self.bot, self.role_manager)
-        setupLevel(self.bot)
-        setupCountbot(self.bot)
-        setupAuditLog(self.bot)
-        setupClientAI(self.bot)
-        setupRoleAssignment(self.bot, self.role_manager)
-        setupCupid(self.bot)
-        setupTmp(self.bot)      
-        setupGiveaway(self.bot, self.role_manager)
-        setupCommands(self.bot)      
+        setupGlobal(self.bot, self.rolemanager)
+        setupTicket(self.bot, self.rolemanager)
+        setupModeration(self.bot, self.rolemanager)
+        setupJoin(self.bot, self.rolemanager)
+        setupVoice(self.bot, self.rolemanager)
+        setupReaction(self.bot, self.rolemanager)
+        setupLevel(self.bot, self.rolemanager)
+        setupCountbot(self.bot, self.rolemanager, self.channelmanager)
+        setupClientAI(self.bot, self.rolemanager, self.channelmanager)
+        setupRoleAssignment(self.bot, self.rolemanager)
+        setupCupid(self.bot, self.rolemanager)
+        setupTmp(self.bot, self.rolemanager)
+        setupGiveaway(self.bot, self.rolemanager)
+        setupCommands(self.bot, self.rolemanager)
+        setupAuditLog(self.bot, self.rolemanager, self.channelmanager)
         logger.info("All extensions set up.")
+
 
 root_logger = logging.getLogger()
 for handler in root_logger.handlers[:]:
     root_logger.removeHandler(handler)
-    
+
 load_dotenv(dotenv_path="envs/config.env")
 logging_level = os.getenv("LOGGING_LEVEL", "DEBUG").upper()
-logging.basicConfig(level=logging_level, filename="log.log", filemode="w", format="%(asctime)s - %(levelname)s - %(message)s")
+logging.basicConfig(level=logging_level, filename="log.log",
+                    filemode="w", format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 logging.getLogger('disnake.http').setLevel(logging.DEBUG)
-formatter = logging.Formatter('[%(asctime)s - %(name)s - %(levelname)s]: %(message)s')
+formatter = logging.Formatter(
+    '[%(asctime)s - %(name)s - %(levelname)s]: %(message)s')
 
 intents = disnake.Intents.all()
 bot = commands.Bot(intents=intents, command_prefix=None)
 
 startup = Startup(bot)
+
 
 @bot.event
 async def on_ready():
@@ -72,31 +80,37 @@ async def on_ready():
         if hasattr(cog, 'on_ready'):
             await cog.on_ready()
 
+
 def check_rate_limits(token):
     headers = {
         "Authorization": f"Bot {token}"
     }
     retry_attempts = 0
     while True:
-        response = requests.get("https://discord.com/api/v9/gateway/bot", headers=headers)
+        response = requests.get(
+            "https://discord.com/api/v9/gateway/bot", headers=headers)
         if response.status_code == 200:
             data = response.json()
             print("Rate Limit Information:")
             print(f"Total: {data['session_start_limit']['total']}")
             print(f"Remaining: {data['session_start_limit']['remaining']}")
-            print(f"Reset After: {data['session_start_limit']['reset_after']} ms")
-            print(f"Max Concurrency: {data['session_start_limit']['max_concurrency']}")
+            print(
+                f"Reset After: {data['session_start_limit']['reset_after']} ms")
+            print(
+                f"Max Concurrency: {data['session_start_limit']['max_concurrency']}")
             return data['session_start_limit']['remaining'] > 2
         elif response.status_code == 429:
             print("Error 429: Too Many Requests. You have exceeded the rate limit.")
             retry_after = response.headers.get("Retry-After")
             if retry_after:
                 print(f"Retry after: {retry_after} seconds")
-                retry_attempts += 2      
-                time.sleep((int(retry_after) + 10)*retry_attempts)          
+                retry_attempts += 2
+                time.sleep((int(retry_after) + 10)*retry_attempts)
         else:
-            print(f"Failed to get rate limit information: {response.status_code}")
+            print(
+                f"Failed to get rate limit information: {response.status_code}")
             return False
+
 
 async def main():
     load_dotenv(dotenv_path="envs/token.env")

@@ -6,62 +6,36 @@ import logging
 from globalfile import Globalfile
 import os
 import sqlite3
-from dbconnection import DatabaseConnection
+from dbconnection import DatabaseConnectionManager
 from exceptionhandler import exception_handler
+from rolemanager import RoleManager
 
 
 class Voice(commands.Cog):
-    def __init__(self, bot: commands.Bot):
+    def __init__(self, bot: commands.Bot, rolemanager: RoleManager):
         self.bot = bot
         self.logger = logging.getLogger("Voice")
-        logging_level = os.getenv("LOGGING_LEVEL", "INFO").upper() 
+        logging_level = os.getenv("LOGGING_LEVEL", "INFO").upper()
         self.logger.setLevel(logging_level)
-        self.globalfile : Globalfile = self.bot.get_cog("Globalfile")   
+        self.globalfile: Globalfile = self.bot.get_cog("Globalfile")
+        self.rolemanager = rolemanager
 
         if not self.logger.handlers:
-            formatter = logging.Formatter('[%(asctime)s - %(name)s - %(levelname)s]: %(message)s')
+            formatter = logging.Formatter(
+                '[%(asctime)s - %(name)s - %(levelname)s]: %(message)s')
             handler = logging.StreamHandler()
             handler.setFormatter(formatter)
             self.logger.addHandler(handler)
-        self.db: sqlite3.Connection = DatabaseConnection()
-        self.cursor: sqlite3.Cursor = self.db.connection.cursor()                    
 
-        self.cursor.execute("""
-            CREATE TABLE IF NOT EXISTS BLOCKED_USERS (
-                ID INTEGER PRIMARY KEY AUTOINCREMENT,
-                USERID INTEGER,
-                VALUE INTEGER
-            )
-        """)
-        self.db.connection.commit()          
-
-        self.cursor.execute("""
-            CREATE TABLE IF NOT EXISTS CUSTOMCHANNEL (
-                ID INTEGER PRIMARY KEY AUTOINCREMENT,
-                CHANNELID INTEGER,
-                CHANNELOWNERID INTEGER,
-                CREATEDAT TEXT                
-            )
-        """)
-        self.db.connection.commit()
-
-        self.cursor.execute("""
-            CREATE TABLE IF NOT EXISTS SAVESESSIONS (
-                ID INTEGER PRIMARY KEY AUTOINCREMENT,
-                USERID INTEGER,
-                CHANNELNAME TEXT,
-                CHANNELLIMIT INTEGER              
-            )
-        """)
-        self.db.connection.commit()          
-
-        self.template_channel_id = 1338277012326055967            
+        self.template_channel_id = 1338277012326055967
         self.allowed_category_id = 1069043859998396529
 
     @commands.Cog.listener()
     async def on_ready(self):
-        self.auditlog_channel : disnake.TextChannel = self.bot.get_channel(1221018527289577582)
-        self.voicelog_channel : disnake.TextChannel = self.bot.get_channel(1219347644640530553)
+        self.auditlog_channel: disnake.TextChannel = self.bot.get_channel(
+            1221018527289577582)
+        self.voicelog_channel: disnake.TextChannel = self.bot.get_channel(
+            1219347644640530553)
 
     @commands.Cog.listener()
     async def on_voice_state_update(self, member: disnake.Member, before: disnake.VoiceState, after: disnake.VoiceState):
@@ -75,66 +49,85 @@ class Voice(commands.Cog):
         def create_embed(title, color):
             embed = disnake.Embed(title=title, color=color)
             embed.set_author(name=member.name, icon_url=avatar_url)
-            embed.set_footer(text=f"ID: {member.id} - heute um {current_datetime.strftime('%H:%M:%S')} Uhr")
+            embed.set_footer(
+                text=f"ID: {member.id} - heute um {current_datetime.strftime('%H:%M:%S')} Uhr")
             return embed
-        
+
         current_datetime = (await self.globalfile.get_current_time())
 
         if before.channel and before.channel.category_id == self.allowed_category_id and len(before.channel.members) == 0 and before.channel.id != 1338277012326055967:
-            self.logger.info(f"Der Voice-Channel {before.channel.name} ist leer und wird gelöscht.")
-            self.cursor.execute("DELETE FROM CUSTOMCHANNEL WHERE CHANNELID = ?", (before.channel.id,))
-            self.db.connection.commit()
-            await before.channel.delete()                               
+            self.logger.info(
+                f"Der Voice-Channel {before.channel.name} ist leer und wird gelöscht.")
+            cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "DELETE FROM CUSTOMCHANNEL WHERE CHANNELID = ?", (before.channel.id,))
+
+            await before.channel.delete()
 
         if before.channel is None and after.channel is not None:
-            self.logger.info(f"{member.name} hat den Voice-Channel {after.channel.name} betreten.")
-            embed = create_embed(f"User entered voice channel <#{after.channel.id}>!", 0x4169E1)
-        
+            self.logger.info(
+                f"{member.name} hat den Voice-Channel {after.channel.name} betreten.")
+            embed = create_embed(
+                f"User entered voice channel <#{after.channel.id}>!", 0x4169E1)
+
         elif before.channel is not None and after.channel is None:
             User = await self.globalfile.admin_did_something(disnake.AuditLogAction.member_disconnect, member)
             if User.username == member.name:
-                self.logger.info(f"{member.name} hat den Voice-Channel {before.channel.name} verlassen.")
-                embed = create_embed(f"User leaved voice channel <#{before.channel.id}>!", 0xFF0000)
+                self.logger.info(
+                    f"{member.name} hat den Voice-Channel {before.channel.name} verlassen.")
+                embed = create_embed(
+                    f"User leaved voice channel <#{before.channel.id}>!", 0xFF0000)
             else:
-                self.logger.info(f"{member.name} wurde von {User.username}({User.userid}) aus dem Channel {before.channel.name} gekickt.")
+                self.logger.info(
+                    f"{member.name} wurde von {User.username}({User.userid}) aus dem Channel {before.channel.name} gekickt.")
                 channel = self.auditlog_channel
-                embed = create_embed(f"{member.name} was kicked from {User.username}({User.userid}) out of Channel {before.channel.name}.", 0xFF0000)    
+                embed = create_embed(
+                    f"{member.name} was kicked from {User.username}({User.userid}) out of Channel {before.channel.name}.", 0xFF0000)
 
         elif before.deaf != after.deaf or before.mute != after.mute or before.self_mute != after.self_mute:
             if after.deaf:
                 User = await self.globalfile.admin_did_something(disnake.AuditLogAction.member_update, member)
                 if User.username == member.name:
                     self.logger.info(f"{member.name} was generally muted.")
-                    embed = create_embed(f"User was generally muted in <#{after.channel.id}>!", 0xFFA500)
+                    embed = create_embed(
+                        f"User was generally muted in <#{after.channel.id}>!", 0xFFA500)
                 else:
-                    self.logger.info(f"{member.name} wurde generell gemuted von {User.username}({User.userid}).")
+                    self.logger.info(
+                        f"{member.name} wurde generell gemuted von {User.username}({User.userid}).")
                     channel = self.auditlog_channel
-                    embed = create_embed(f"{member.name} was generally muted from {User.username}({User.userid}).", 0xFF0000)                    
-            elif after.mute:                
+                    embed = create_embed(
+                        f"{member.name} was generally muted from {User.username}({User.userid}).", 0xFF0000)
+            elif after.mute:
                 User = await self.globalfile.admin_did_something(disnake.AuditLogAction.member_update, member)
-                self.logger.info(f"{member.name}'s Mikrofon wurde von {User.username}({User.userid}) stummgeschaltet.")
+                self.logger.info(
+                    f"{member.name}'s Mikrofon wurde von {User.username}({User.userid}) stummgeschaltet.")
                 channel = self.auditlog_channel
-                embed = create_embed(f"{member.name} microphone was muted from {User.username}({User.userid}).", 0xFF0000)
+                embed = create_embed(
+                    f"{member.name} microphone was muted from {User.username}({User.userid}).", 0xFF0000)
             elif after.self_mute:
                 if member.voice and member.voice.self_mute:
                     self.logger.info(f"{member.name} microphone was muted.")
-                    embed = create_embed(f"Users microphone was muted in <#{after.channel.id}>!", 0xFFA500)
+                    embed = create_embed(
+                        f"Users microphone was muted in <#{after.channel.id}>!", 0xFFA500)
             else:
                 if before.self_mute:
                     self.logger.info(f"{member.name} no longer muted.")
-                    embed = create_embed(f"User no longer muted <#{after.channel.id}>!", 0x006400)
+                    embed = create_embed(
+                        f"User no longer muted <#{after.channel.id}>!", 0x006400)
                 else:
-                    User = await self.globalfile.admin_did_something(disnake.AuditLogAction.member_update, member.guild ,member)
-                    self.logger.info(f"{member.name} wurde von {User.username}({User.userid}) entmuted.")
+                    User = await self.globalfile.admin_did_something(disnake.AuditLogAction.member_update, member.guild, member)
+                    self.logger.info(
+                        f"{member.name} wurde von {User.username}({User.userid}) entmuted.")
                     channel = self.auditlog_channel
-                    embed = create_embed(f"{member.name} was unmuted from {User.username}({User.userid}).", 0xFF0000)
+                    embed = create_embed(
+                        f"{member.name} was unmuted from {User.username}({User.userid}).", 0xFF0000)
 
         elif before.channel is not None and after.channel is not None and before.channel != after.channel:
-            self.logger.info(f"{member.name} hat den Voice-Channel {before.channel.name} verlassen und den Voice Channel {after.channel.name} betreten.")
-            embed = create_embed(f"User leaved voice channel <#{before.channel.id}> and entered voice channel <#{after.channel.id}>!", 0x4169E1)
+            self.logger.info(
+                f"{member.name} hat den Voice-Channel {before.channel.name} verlassen und den Voice Channel {after.channel.name} betreten.")
+            embed = create_embed(
+                f"User leaved voice channel <#{before.channel.id}> and entered voice channel <#{after.channel.id}>!", 0x4169E1)
 
         if embed is not None:
-            await channel.send(embed=embed)  
+            await channel.send(embed=embed)
 
         if after.channel and after.channel.id == self.template_channel_id:
             # Erstelle einen neuen Voice-Channel
@@ -143,62 +136,63 @@ class Voice(commands.Cog):
                 name=f"{member.name}'s Channel",
                 overwrites={
                     member.guild.default_role: disnake.PermissionOverwrite(connect=True, speak=True, view_channel=False),
-                    member: disnake.PermissionOverwrite(connect=True, speak=True, view_channel=True)
+                    member: disnake.PermissionOverwrite(
+                        connect=True, speak=True, view_channel=True)
                 }
             )
-            
+
             # Verschiebe den Benutzer in den neuen Voice-Channel
             await member.move_to(new_voice_channel)
-            
+
             # Sende ein Embed in den Text-Channel
             embed = disnake.Embed(
                 title="Channel Steuerung",
                 description="Hier sind die Befehle, um deinen Channel zu steuern:",
                 color=disnake.Color.blue()
             )
-            
+
             embed.add_field(name="Channel Management", value=(
                 "`/voicerename <name>` - Ändere den Namen des Channels\n"
                 "`/setlimit <number>` - Setze die maximale Anzahl der Mitglieder\n"
                 "`/deletechannel` - Lösche den Channel\n"
                 "`/save` - Speichere den Channel/die Session\n"
             ), inline=False)
-            
+
             embed.add_field(name="Mitglieder Management", value=(
                 "`/voicekick <member>` - Kicke ein Mitglied aus dem Channel\n"
                 "`/voiceblock <member>` - Blockiere ein Mitglied vom Channel\n"
                 "`/voiceunblock <member>` - Entblockiere ein Mitglied vom Channel\n"
                 "`/permit <member>` - Erlaube einem Mitglied den Channel zu betreten\n"
             ), inline=False)
-            
+
             embed.add_field(name="Channel Sichtbarkeit", value=(
                 "`/hide` - Verstecke den Channel\n"
                 "`/unhide` - Zeige den Channel wieder\n"
                 "`/lock` - Schließe den Channel\n"
                 "`/unlock` - Öffne den Channel\n"
             ), inline=False)
-            
+
             embed.add_field(name="Channel Besitz", value=(
                 "`/claim` - Übernehme den Channel\n"
                 "`/transfer <member>` - Übertrage den Channel an ein Mitglied\n"
             ), inline=False)
-            
+
             embed.add_field(name="Sonstiges", value=(
                 "`/joinrequest` - Fordere den Beitritt zum Channel an\n"
             ), inline=False)
-            
+
             await new_voice_channel.send(embed=embed)
-            
+
             user_record = await self.globalfile.get_user_record(discordid=member.id)
-            self.cursor.execute("INSERT INTO CUSTOMCHANNEL (CHANNELID, CHANNELOWNERID, CREATEDAT) VALUES (?,?,?)", (new_voice_channel.id, user_record["ID"], current_datetime))
-            
+            await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "INSERT INTO CUSTOMCHANNEL (CHANNELID, CHANNELOWNERID, CREATEDAT) VALUES (?,?,?)", (new_voice_channel.id, user_record["ID"], current_datetime))
+
             # Blockiere bereits blockierte Benutzer vom neuen Voice-Channel
             user_record = await self.globalfile.get_user_record(discordid=member.id)
-            self.cursor.execute("SELECT VALUE FROM BLOCKED_USERS WHERE USERID = ?", (user_record['ID'],))
-            blocked_users = self.cursor.fetchall()
+            cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT VALUE FROM BLOCKED_USERS WHERE USERID = ?", (user_record['ID'],))
+            blocked_users = await cursor.fetchall()
             for user_id in blocked_users:
                 user_record = await self.globalfile.get_user_record(user_id[0])
-                guild : disnake.Guild = member.guild
+                guild: disnake.Guild = member.guild
                 user = guild.get_member(int(user_record['DISCORDID']))
                 if user:
                     await new_voice_channel.set_permissions(user, connect=False)
@@ -211,46 +205,46 @@ class Voice(commands.Cog):
             description="Hier sind die Befehle, um deinen Voice-Channel zu steuern:",
             color=disnake.Color.blue()
         )
-        
+
         embed.add_field(name="Channel Management", value=(
             "`/voicerename <name>` - Ändere den Namen des Channels\n"
             "`/setlimit <number>` - Setze die maximale Anzahl der Mitglieder\n"
             "`/deletechannel` - Lösche den Channel\n"
             "`/save` - Speichere den Channel/die Session\n"
         ), inline=False)
-        
+
         embed.add_field(name="Mitglieder Management", value=(
             "`/voicekick <member>` - Kicke ein Mitglied aus dem Channel\n"
             "`/voiceblock <member>` - Blockiere ein Mitglied vom Channel\n"
             "`/voiceunblock <member>` - Entblockiere ein Mitglied vom Channel\n"
             "`/permit <member>` - Erlaube einem Mitglied den Channel zu betreten\n"
         ), inline=False)
-        
+
         embed.add_field(name="Channel Sichtbarkeit", value=(
             "`/hide` - Verstecke den Channel\n"
             "`/unhide` - Zeige den Channel wieder\n"
             "`/lock` - Schließe den Channel\n"
             "`/unlock` - Öffne den Channel\n"
         ), inline=False)
-        
+
         embed.add_field(name="Channel Besitz", value=(
             "`/claim` - Übernehme den Channel\n"
             "`/transfer <member>` - Übertrage den Channel an ein Mitglied\n"
         ), inline=False)
-        
+
         embed.add_field(name="Sonstiges", value=(
             "`/joinrequest` - Fordere den Beitritt zum Channel an\n"
         ), inline=False)
-        
-        await inter.response.send_message(embed=embed, ephemeral=False)                    
+
+        await inter.response.send_message(embed=embed, ephemeral=False)
 
     @exception_handler
     async def is_channel_owner(self, user: disnake.Member, channel: disnake.VoiceChannel) -> bool:
-        self.cursor.execute("SELECT CHANNELOWNERID FROM CUSTOMCHANNEL WHERE CHANNELID = ?", (channel.id,))
-        owner_id = self.cursor.fetchone()
+        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT CHANNELOWNERID FROM CUSTOMCHANNEL WHERE CHANNELID = ?", (channel.id,))
+        owner_id = (await cursor.fetchone())
         if owner_id and owner_id[0] == (await self.globalfile.get_user_record(discordid=user.id))['ID']:
             return True
-        return False                    
+        return False
 
     @exception_handler
     async def _voicerename(self, inter: disnake.ApplicationCommandInteraction, name: str):
@@ -309,8 +303,8 @@ class Voice(commands.Cog):
                     await inter.author.voice.channel.set_permissions(member, connect=False)
                     userid = (await self.globalfile.get_user_record(discordid=inter.user.id))['ID']
                     blocked_userid = (await self.globalfile.get_user_record(discordid=member.id))['ID']
-                    self.cursor.execute("INSERT OR IGNORE INTO BLOCKED_USERS (USERID,VALUE) VALUES (?,?)", (int(userid), int(blocked_userid)))
-                    self.db.connection.commit()
+                    await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "INSERT OR IGNORE INTO BLOCKED_USERS (USERID,VALUE) VALUES (?,?)", (int(userid), int(blocked_userid)))
+
                     if member.voice and member.voice.channel == inter.author.voice.channel:
                         await member.move_to(None)
                     await inter.response.send_message(f"{member.name} wurde vom Channel blockiert.", ephemeral=True)
@@ -330,8 +324,8 @@ class Voice(commands.Cog):
                     await inter.author.voice.channel.set_permissions(member, connect=True)
                     userid = (await self.globalfile.get_user_record(discordid=inter.user.id))['ID']
                     blocked_userid = (await self.globalfile.get_user_record(discordid=member.id))['ID']
-                    self.cursor.execute("DELETE FROM BLOCKED_USERS WHERE USERID = ? AND VALUE = ?", (int(userid), int(blocked_userid)))
-                    self.db.connection.commit()
+                    cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "DELETE FROM BLOCKED_USERS WHERE USERID = ? AND VALUE = ?", (int(userid), int(blocked_userid)))
+
                     await inter.response.send_message(f"{member.name} wurde vom Channel entblockiert.", ephemeral=True)
                 else:
                     await inter.response.send_message("Nur der Channel-Owner kann diesen Befehl ausführen.", ephemeral=True)
@@ -436,16 +430,16 @@ class Voice(commands.Cog):
         """Übernehme den Voice-Channel."""
         if inter.author.voice and inter.author.voice.channel:
             if inter.author.voice.channel.category_id == self.allowed_category_id:
-                self.cursor.execute("SELECT CHANNELOWNERID FROM CUSTOMCHANNEL WHERE CHANNELID = ?", (inter.author.voice.channel.id,))
-                owner_id = self.cursor.fetchone()
+                cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT CHANNELOWNERID FROM CUSTOMCHANNEL WHERE CHANNELID = ?", (inter.author.voice.channel.id,))
+                owner_id = (await cursor.fetchone())
                 if owner_id:
                     channel_owner = inter.guild.get_member(int(owner_id[0]))
                     if channel_owner and channel_owner.voice and channel_owner.voice.channel == inter.author.voice.channel:
                         await inter.response.send_message("Der aktuelle Channel-Owner ist noch im Channel.", ephemeral=True)
                     else:
                         user_record = await self.globalfile.get_user_record(discordid=inter.user.id)
-                        self.cursor.execute("UPDATE CUSTOMCHANNEL SET CHANNELOWNERID = ? WHERE CHANNELID = ?", (user_record['ID'], inter.author.voice.channel.id))
-                        self.db.connection.commit()
+                        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "UPDATE CUSTOMCHANNEL SET CHANNELOWNERID = ? WHERE CHANNELID = ?", (user_record['ID'], inter.author.voice.channel.id))
+
                         await inter.response.send_message("Du hast den Channel übernommen.", ephemeral=True)
                 else:
                     await inter.response.send_message("Channel-Owner konnte nicht gefunden werden.", ephemeral=True)
@@ -459,14 +453,14 @@ class Voice(commands.Cog):
         """Übertrage den Voice-Channel an ein Mitglied."""
         if inter.author.voice and inter.author.voice.channel:
             if inter.author.voice.channel.category_id == self.allowed_category_id:
-                self.cursor.execute("SELECT CHANNELOWNERID FROM CUSTOMCHANNEL WHERE CHANNELID = ?", (inter.author.voice.channel.id,))
-                owner_id = self.cursor.fetchone()
+                cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT CHANNELOWNERID FROM CUSTOMCHANNEL WHERE CHANNELID = ?", (inter.author.voice.channel.id,))
+                owner_id = (await cursor.fetchone())
                 if owner_id and owner_id[0] == (await self.globalfile.get_user_record(discordid=inter.user.id))['ID']:
                     user_record = await self.globalfile.get_user_record(discordid=member.id)
                     await inter.author.voice.channel.set_permissions(inter.author, view_channel=False)
                     await inter.author.voice.channel.set_permissions(member, view_channel=True)
-                    self.cursor.execute("UPDATE CUSTOMCHANNEL SET CHANNELOWNERID = ? WHERE CHANNELID = ?", (user_record['ID'], inter.author.voice.channel.id))
-                    self.db.connection.commit()
+                    cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "UPDATE CUSTOMCHANNEL SET CHANNELOWNERID = ? WHERE CHANNELID = ?", (user_record['ID'], inter.author.voice.channel.id))
+
                     await inter.response.send_message(f"Du hast den Channel an {member.name} übertragen.", ephemeral=True)
                 else:
                     await inter.response.send_message("Nur der Channel-Owner kann diesen Befehl ausführen.", ephemeral=True)
@@ -481,9 +475,9 @@ class Voice(commands.Cog):
         if inter.author.voice and inter.author.voice.channel:
             if inter.author.voice.channel.category_id == self.allowed_category_id:
                 user_record = await self.globalfile.get_user_record(discordid=inter.user.id)
-                self.cursor.execute("INSERT INTO SAVESESSIONS (USERID, CHANNELNAME, CHANNELLIMIT) VALUES (?, ?, ?)", 
-                                    (user_record['ID'], inter.author.voice.channel.name, inter.author.voice.channel.user_limit))
-                self.db.connection.commit()
+                await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "INSERT INTO SAVESESSIONS (USERID, CHANNELNAME, CHANNELLIMIT) VALUES (?, ?, ?)",
+                                                                      (user_record['ID'], inter.author.voice.channel.name, inter.author.voice.channel.user_limit))
+
                 await inter.response.send_message("Channel/Session wurde gespeichert.", ephemeral=True)
             else:
                 await inter.response.send_message("Dieser Befehl kann nur in einer bestimmten Kategorie verwendet werden.", ephemeral=True)
@@ -494,11 +488,12 @@ class Voice(commands.Cog):
     async def _joinrequest(self, inter: disnake.ApplicationCommandInteraction, channel: disnake.VoiceChannel):
         """Fordere den Beitritt zum Voice-Channel an."""
         if channel.category_id == self.allowed_category_id:
-            self.cursor.execute("SELECT CHANNELOWNERID FROM CUSTOMCHANNEL WHERE CHANNELID = ?", (channel.id,))
-            owner_id = self.cursor.fetchone()
+            cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT CHANNELOWNERID FROM CUSTOMCHANNEL WHERE CHANNELID = ?", (channel.id,))
+            owner_id = (await cursor.fetchone())
             if owner_id:
                 user_record = await self.globalfile.get_user_record(userid=owner_id[0])
-                channel_owner = inter.guild.get_member(int(user_record['DISCORDID']))
+                channel_owner = inter.guild.get_member(
+                    int(user_record['DISCORDID']))
                 if channel_owner:
                     embed = Embed(
                         title="Beitrittsanfrage",
@@ -506,8 +501,10 @@ class Voice(commands.Cog):
                         color=disnake.Color.blue()
                     )
                     view = ui.View(timeout=90)  # Set the timeout to 90 seconds
-                    view.add_item(ui.Button(label="Beitritt gestatten", style=ButtonStyle.green, custom_id="allow_join"))
-                    view.add_item(ui.Button(label="Beitritt ablehnen", style=ButtonStyle.red, custom_id="deny_join"))
+                    view.add_item(ui.Button(label="Beitritt gestatten",
+                                  style=ButtonStyle.green, custom_id="allow_join"))
+                    view.add_item(ui.Button(label="Beitritt ablehnen",
+                                  style=ButtonStyle.red, custom_id="deny_join"))
 
                     await inter.response.send_message(content=channel_owner.mention, embed=embed, view=view, ephemeral=True)
 
@@ -538,5 +535,5 @@ class Voice(commands.Cog):
             await inter.response.send_message("Dieser Befehl kann nur in einer bestimmten Kategorie verwendet werden.", ephemeral=True)
 
 
-def setupVoice(bot):
-    bot.add_cog(Voice(bot))
+def setupVoice(bot: commands.Bot, rolemanager: RoleManager):
+    bot.add_cog(Voice(bot, rolemanager))

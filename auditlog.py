@@ -2,7 +2,7 @@ import disnake
 from disnake.ext import commands
 import logging
 from globalfile import Globalfile
-from dbconnection import DatabaseConnection
+from dbconnection import DatabaseConnectionManager
 from dotenv import load_dotenv
 import pytz
 import os
@@ -10,6 +10,8 @@ import sqlite3
 from datetime import datetime
 from collections import namedtuple
 from typing import Union
+from rolemanager import RoleManager
+from channelmanager import ChannelManager
 
 
 class AuditLog(commands.Cog):
@@ -62,36 +64,34 @@ class AuditLog(commands.Cog):
     THREAD_UPDATE = disnake.AuditLogAction.thread_update
     THREAD_DELETE = disnake.AuditLogAction.thread_delete
 
-    def __init__(self, bot: commands.Bot):
+    def __init__(self, bot: commands.Bot, rolemanager: RoleManager, channelmanager: ChannelManager):
         self.bot = bot
         self.logger = logging.getLogger("AuditLog")
-        logging_level = os.getenv("LOGGING_LEVEL", "INFO").upper() 
+        logging_level = os.getenv("LOGGING_LEVEL", "INFO").upper()
         self.logger.setLevel(logging_level)
+        self.rolemanager = rolemanager
+        self.channelmanager = channelmanager
 
         if not self.logger.handlers:
-            formatter = logging.Formatter('[%(asctime)s - %(name)s - %(levelname)s]: %(message)s')
+            formatter = logging.Formatter(
+                '[%(asctime)s - %(name)s - %(levelname)s]: %(message)s')
             handler = logging.StreamHandler()
             handler.setFormatter(formatter)
             self.logger.addHandler(handler)
-            
-        self.db: sqlite3.Connection = DatabaseConnection()
-        self.cursor: sqlite3.Cursor = self.db.connection.cursor()
 
-        self.cursor.execute("""
-            CREATE TABLE IF NOT EXISTS AUDITLOG (
-                ID INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
-                LOGTYPE TEXT,
-                USERID TEXT NOT NULL,
-                DETAILS TEXT
-            )
-        """)
-        self.db.connection.commit()
         load_dotenv(dotenv_path="envs/settings.env")
-        self.channel_id = os.getenv("AUDITLOG_CHANNEL_ID")
 
         self.user_data = {}
         self.TimerMustReseted = True
-        self.UserRecord = namedtuple('UserRecord', ['user', 'username', 'userid'])
+        self.UserRecord = namedtuple(
+            'UserRecord', ['user', 'username', 'userid'])
+
+    @commands.Cog.listener()
+    async def on_ready(self):
+        self.auditlog_channel = self.channelmanager.get_channel(self.bot.guilds[0].id,
+                                                                int(os.getenv("AUDITLOG_CHANNEL_ID")))
+        self.logger.debug("AuditLog is ready.")
+        self.logger.debug(f"Loaded channel ID: {self.auditlog_channel.id}")
 
     async def send_audit_log_embed(self, action: disnake.AuditLogAction, entry: disnake.AuditLogEntry):
         thumbnail_url = None
@@ -100,7 +100,7 @@ class AuditLog(commands.Cog):
             try:
                 thumbnail_url = entry.user.avatar.url
             except Exception as e:
-                self.logger.error(f"Error while fetching avatar URL: {e}")            
+                self.logger.error(f"Error while fetching avatar URL: {e}")
         elif isinstance(entry.target, disnake.Guild):
             author_name = entry.guild.name
             thumbnail_url = entry.guild.icon.url
@@ -117,7 +117,8 @@ class AuditLog(commands.Cog):
             embed.set_author(name=author_name, icon_url=thumbnail_url)
         else:
             embed.set_author(name=author_name)
-        embed.add_field(name="Responsible User", value=entry.user.mention, inline=True)
+        embed.add_field(name="Responsible User",
+                        value=entry.user.mention, inline=True)
         embed.add_field(name="Action", value=action.name, inline=True)
 
         changes_str = ""
@@ -154,20 +155,17 @@ class AuditLog(commands.Cog):
             return
         else:
             changes_str += f"**{key}**:\nBefore: {before}\nAfter: {after}\n\n"
-        
-        embed.add_field(name="Changes", value=changes_str, inline=False)
 
-        channel = entry.guild.get_channel(int(self.channel_id))
-        if channel:
-            await channel.send(embed=embed)
-        else:
-            self.logger.error(f"Channel with ID {self.channel_id} not found.")
+        embed.add_field(name="Changes", value=changes_str, inline=False)
+        try:
+            if self.auditlog_channel:
+                await self.auditlog_channel.send(embed=embed)
+        except Exception as e:
+            self.logger.error(f"Error while sending audit log embed: {e}")
 
     async def log_audit_entry(self, logtype: str, userid: int, details: str):
         """Loggt einen Audit-Eintrag in die Datenbank."""
-        cursor = self.db.connection.cursor()
-        cursor.execute("INSERT INTO AUDITLOG (LOGTYPE, USERID, DETAILS) VALUES (?, ?, ?)", (logtype, userid, details))
-        self.db.connection.commit()
+        await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "INSERT INTO AUDITLOG (LOGTYPE, USERID, DETAILS) VALUES (?, ?, ?)", (logtype, userid, details))
 
     @commands.Cog.listener()
     async def on_audit_log_entry_create(self, entry: disnake.AuditLogEntry):
@@ -175,11 +173,7 @@ class AuditLog(commands.Cog):
         details = f"Action: {action.name}, Target: {entry.target}, Changes: {entry.changes}, Reason: {entry.reason}, Responsible User: {entry.user.name}"
         await self.log_audit_entry(action.name, entry.user.id, details)
         await self.send_audit_log_embed(action, entry)
-    
-    @commands.Cog.listener()
-    async def on_ready(self):
-        self.logger.debug("AuditLog is ready.")
-        self.logger.debug(f"Loaded channel ID: {self.channel_id}")
-        
-def setupAuditLog(bot):
-    bot.add_cog(AuditLog(bot))
+
+
+def setupAuditLog(bot: commands.Bot, rolemanager: RoleManager, channelmanager: ChannelManager):
+    bot.add_cog(AuditLog(bot, rolemanager, channelmanager))

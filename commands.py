@@ -1,4 +1,6 @@
-import disnake, os, re
+import disnake
+import os
+import re
 from disnake.ext import commands, tasks
 from disnake.ui import Button, View
 from disnake import ApplicationCommandInteraction, User, Member, Role
@@ -9,7 +11,7 @@ from rolehierarchy import rolehierarchy
 from dotenv import load_dotenv
 import logging
 import sqlite3
-from dbconnection import DatabaseConnection
+from dbconnection import DatabaseConnectionManager
 import os
 from dotenv import load_dotenv, set_key
 from tmp import Tmp
@@ -22,54 +24,77 @@ from roleassignment import RoleAssignment
 from voice import Voice
 from giveaway import Giveaway
 from typing import Optional
+from rolemanager import RoleManager
 
 
 class MyCommands(commands.Cog):
-    def __init__(self, bot: commands.Bot):
+    def __init__(self, bot: commands.Bot, rolemanager: RoleManager):
         self.bot = bot
-        self.db = DatabaseConnection()  # Stellen Sie sicher, dass die Datenbankverbindung initialisiert wird
-
         # Logger initialisieren
         self.logger = logging.getLogger("Commands")
-        logging_level = os.getenv("LOGGING_LEVEL", "INFO").upper()         
+        logging_level = os.getenv("LOGGING_LEVEL", "INFO").upper()
         self.logger.setLevel(logging_level)
-        self.globalfile = Globalfile(bot)        
+        self.globalfile: Globalfile = self.bot.get_cog('Globalfile')
         load_dotenv(dotenv_path="envs/settings.env")
         self.last_info_message = None
         self.last_info_time = None
         self.level_cog = self.bot.get_cog('Level')
-        self.tmp_instance : Tmp = self.bot.get_cog('Tmp')
-        self.cupid_instance : Cupid = self.bot.get_cog('Cupid')
-        self.join_instance : Join = self.bot.get_cog('Join')
-        self.level_instance : Level = self.bot.get_cog('Level')
-        self.mod_instance : Moderation = self.bot.get_cog('Moderation')
-        self.ticket_instance : Ticket = self.bot.get_cog('Ticket')
-        self.roleassignment_instance : RoleAssignment = self.bot.get_cog('RoleAssignment')
-        self.voice_instance = self.bot.get_cog('Voice')
-        self.globalfile_instance : Globalfile = self.bot.get_cog('Globalfile')
-        self.giveaway_instance : Giveaway = self.bot.get_cog('Giveaway')
+        self.tmp_instance: Tmp = self.bot.get_cog('Tmp')
+        self.cupid_instance: Cupid = self.bot.get_cog('Cupid')
+        self.join_instance: Join = self.bot.get_cog('Join')
+        self.level_instance: Level = self.bot.get_cog('Level')
+        self.mod_instance: Moderation = self.bot.get_cog('Moderation')
+        self.ticket_instance: Ticket = self.bot.get_cog('Ticket')
+        self.roleassignment_instance: RoleAssignment = self.bot.get_cog(
+            'RoleAssignment')
+        self.voice_instance: Voice = self.bot.get_cog('Voice')
+        self.giveaway_instance: Giveaway = self.bot.get_cog('Giveaway')
+        self.rolemanager: RoleManager = rolemanager
 
-        if not self.logger.handlers:          
-            formatter = logging.Formatter('[%(asctime)s - %(name)s - %(levelname)s]: %(message)s')
+        if not self.logger.handlers:
+            formatter = logging.Formatter(
+                '[%(asctime)s - %(name)s - %(levelname)s]: %(message)s')
             handler = logging.StreamHandler()
             handler.setFormatter(formatter)
             self.logger.addHandler(handler)
-            
+
         load_dotenv(dotenv_path="envs/settings.env")
-        self.settings_keys = [
-            "FACTOR",
-            "MESSAGE_WORTH_PER_VOICEMIN",
-            "MIN_ACCOUNT_AGE_DAYS"
-            # Füge hier weitere Schlüssel hinzu, die änderbar sein sollen
-        ]            
-        
-        self.db: sqlite3.Connection = DatabaseConnection()
-        self.cursor: sqlite3.Cursor = self.db.connection.cursor()                   
+        settings_keys = [key for key in os.environ.keys()]
+        self.settings_keys = settings_keys
 
     def cog_unload(self):
-        Globalfile.unban_task.cancel()        
+        Globalfile.unban_task.cancel()
 
-    
+    @commands.Cog.listener()
+    async def on_ready(self):
+        guild = self.bot.guilds[0]
+        commands_to_update = [
+            "list_banned_users", "blacklist_add", "blacklist_remove", "blacklist",
+            "add_user_to_ticket", "note_add", "note_delete", "user_profile", "disconnect", "sync_users",
+            "remove_role_from_all", "unban_all_users", "warn_inactive_users", "kick_inactive_users",
+            "verify_user", "add_image", "set_ai_open", "set_setting", "send_message", "send_unofficalwarn_message", "add_second_account",
+            "dating_info", "debug_top_matches", "recalculate_invite_xp", "deletedata_for_nonexistent_user",
+            "random_anime_gif", "update_all_users_roles", "calculate_message_xp", "recalculate_experience",
+            "update_levels", "add_xp_to_levels", "add_xp_to_user", "add_xp_to_voice_channel",
+            "activity_since", "timeout", "timeout_remove", "warn_add", "warn_delete", "ban", "unban",
+            "kick", "delete_messages_after", "create_ticket_embeds", "create_roles_embeds",
+            "create_nsfwrules_embeds", "create_embed", "create_seelsorge_embed", "create_rules_embed",
+            "draw_giveaway", "create_giveaway"
+        ]
+        for command_name in commands_to_update:
+            command = guild.get_command(command_name)
+            if command:
+                permissions = [
+                    disnake.ApplicationCommandPermission(
+                        id=role.id,  # ID der Rolle
+                        type=disnake.ApplicationCommandPermissionType.role,
+                        permission=True
+                    )
+                    # Rolle, die Zugriff haben soll
+                    for role in guild.roles if role.name == "Teamrolle"
+                ]
+                await command.edit_permissions(guild.id, permissions)
+
     @commands.slash_command(guild_ids=[854698446996766730])
     async def info(self, inter: disnake.ApplicationCommandInteraction):
         """Get technical information about the bot and server."""
@@ -82,30 +107,30 @@ class MyCommands(commands.Cog):
 
     @commands.slash_command(guild_ids=[854698446996766730])
     async def user(self, inter: disnake.ApplicationCommandInteraction):
-        await self.tmp_instance._user(inter)                       
+        await self.tmp_instance._user(inter)
 
     @commands.slash_command(guild_ids=[854698446996766730])
     async def list_banned_users(self, inter: disnake.ApplicationCommandInteraction):
         """Listet alle gebannten Benutzer auf und zeigt den Entbannzeitpunkt an, falls vorhanden."""
         await self.tmp_instance._list_banned_users(inter)
 
-    @commands.slash_command(guild_ids=[854698446996766730])
+    @commands.slash_command(guild_ids=[854698446996766730], default_member_permissions=disnake.Permissions(manage_messages=True))
     @rolehierarchy.check_permissions("Moderator")
-    async def badword_add(self, inter: disnake.ApplicationCommandInteraction, word: str):
+    async def blacklist_add(self, inter: disnake.ApplicationCommandInteraction, word: str = commands.Param(name="wort", description="Das Wort, das zur Blacklist hinzugefügt werden soll")):
         """Füge ein Wort zur Blacklist-Liste hinzu, wenn es noch nicht existiert."""
-        await self.tmp_instance._badword_add(inter, word)
-            
-    @commands.slash_command(guild_ids=[854698446996766730])
-    @rolehierarchy.check_permissions("Moderator")
-    async def badword_remove(self, inter: disnake.ApplicationCommandInteraction, word: str):
-        """Entferne ein Wort von der Blacklist-Liste."""
-        await self.tmp_instance._badword_remove(inter, word)
+        await self.tmp_instance._blacklist_add(inter, word)
 
     @commands.slash_command(guild_ids=[854698446996766730])
     @rolehierarchy.check_permissions("Moderator")
-    async def badwords_list(self, inter: disnake.ApplicationCommandInteraction):
+    async def blacklist_remove(self, inter: disnake.ApplicationCommandInteraction, word: str):
+        """Entferne ein Wort von der Blacklist-Liste."""
+        await self.tmp_instance._blacklist_remove(inter, word)
+
+    @commands.slash_command(guild_ids=[854698446996766730])
+    @rolehierarchy.check_permissions("Moderator")
+    async def blacklist(self, inter: disnake.ApplicationCommandInteraction):
         """Zeige die aktuelle Blacklist-Liste."""
-        await self.tmp_instance._badwords_list(inter)
+        await self.tmp_instance._blacklist(inter)
 
     @commands.slash_command(guild_ids=[854698446996766730])
     @rolehierarchy.check_permissions("Test-Supporter")
@@ -121,9 +146,9 @@ class MyCommands(commands.Cog):
 
     @commands.slash_command(guild_ids=[854698446996766730])
     @rolehierarchy.check_permissions("Senior Supporter")
-    async def note_delete(self, inter: disnake.ApplicationCommandInteraction, caseid: int):
+    async def note_delete(self, inter: disnake.ApplicationCommandInteraction, caseid: int, reason: str = "Kein Grund angegeben"):
         """Markiert eine Note als gelöscht basierend auf der Note ID."""
-        await self.tmp_instance._note_delete(inter, caseid)
+        await self.tmp_instance._note_delete(inter, caseid, reason)
 
     @commands.slash_command(guild_ids=[854698446996766730])
     @rolehierarchy.check_permissions("Test-Supporter")
@@ -142,7 +167,7 @@ class MyCommands(commands.Cog):
     async def sync_users(self, inter: disnake.ApplicationCommandInteraction):
         """Synchronisiere alle Benutzer des Servers mit der Users Tabelle."""
         await self.tmp_instance._sync_users(inter)
-            
+
     @commands.slash_command(guild_ids=[854698446996766730])
     @rolehierarchy.check_permissions("Co Owner")
     async def remove_role_from_all(self, inter: disnake.ApplicationCommandInteraction, role: disnake.Role):
@@ -177,7 +202,7 @@ class MyCommands(commands.Cog):
     @rolehierarchy.check_permissions("Test-Supporter")
     async def help_user(self, inter: disnake.ApplicationCommandInteraction):
         """Zeigt alle Benutzerbefehle an."""
-        await self.tmp_instance._help_user(inter)                           
+        await self.tmp_instance._help_user(inter)
 
     @commands.slash_command(guild_ids=[854698446996766730])
     @rolehierarchy.check_permissions("Supporter")
@@ -190,18 +215,18 @@ class MyCommands(commands.Cog):
     async def add_image(self, inter: disnake.ApplicationCommandInteraction, user: disnake.User, image: disnake.Attachment):
         """Fügt ein Bild zu einem Benutzer hinzu."""
         await self.tmp_instance._add_image(inter, user, image)
-        
+
     @commands.slash_command(guild_ids=[854698446996766730])
     @rolehierarchy.check_permissions("Administrator")
     async def set_ai_open(self, inter: disnake.ApplicationCommandInteraction, value: bool):
         """Setzt den Wert von AI_OPEN in der .env Datei auf true oder false."""
         await self.tmp_instance._set_ai_open(inter, value)
-        
+
     @commands.slash_command(guild_ids=[854698446996766730])
     async def set_birthday(self, inter: disnake.ApplicationCommandInteraction, birthday: str):
         """Setzt den Geburtstag eines Benutzers im Format YYYY-MM-DD."""
         await self.tmp_instance._set_birthday(inter, birthday)
-                
+
     @commands.slash_command(guild_ids=[854698446996766730])
     async def me(self, inter: disnake.ApplicationCommandInteraction):
         """Zeigt dein eigenes Profil an, einschließlich Notizen und Warnungen."""
@@ -212,14 +237,14 @@ class MyCommands(commands.Cog):
     async def set_setting(self, inter: disnake.ApplicationCommandInteraction, key: str, value: str):
         """Ändert einen Wert in der settings.env Datei."""
         await self.tmp_instance._set_setting(inter, key, value)
-        
+
     @set_setting.autocomplete("key")
     async def set_setting_autocomplete(self, inter: disnake.ApplicationCommandInteraction, key: str):
-        return [key for key in self.settings_keys if key.startswith(key)]    
+        return [key for key in self.settings_keys if key.startswith(key)]
 
     @commands.slash_command(guild_ids=[854698446996766730])
     @rolehierarchy.check_permissions("Supporter")
-    async def send_message(self, inter: disnake.ApplicationCommandInteraction, channel : disnake.TextChannel, message: str):
+    async def send_message(self, inter: disnake.ApplicationCommandInteraction, channel: disnake.TextChannel, message: str):
         """Sendet eine Nachricht in einen angegebenen Kanal."""
         await self.tmp_instance._send_message(inter, channel, message)
 
@@ -236,12 +261,6 @@ class MyCommands(commands.Cog):
         await self.tmp_instance._add_second_account(inter, second_user, main_user)
 
     @commands.slash_command(guild_ids=[854698446996766730])
-    @rolehierarchy.check_permissions("Owner")
-    async def reorganize_database(self, inter: ApplicationCommandInteraction):
-        """Führt eine Reorganisation der Datenbank durch."""
-        await self.tmp_instance._reorganize_database(inter)
-
-    @commands.slash_command(guild_ids=[854698446996766730])    
     @rolehierarchy.check_permissions("Administrator")
     async def dating_info(self, inter: disnake.ApplicationCommandInteraction):
         """Zeigt Informationen über das Dating-System an."""
@@ -249,7 +268,7 @@ class MyCommands(commands.Cog):
 
     @commands.slash_command(guild_ids=[854698446996766730])
     @rolehierarchy.check_permissions("Administrator")
-    async def debug_top_matches(self, inter: disnake.ApplicationCommandInteraction):   
+    async def debug_top_matches(self, inter: disnake.ApplicationCommandInteraction):
         """Zeigt die Top-Matches für jeden Benutzer an."""
         await self.cupid_instance._debug_top_matches(inter)
 
@@ -257,7 +276,7 @@ class MyCommands(commands.Cog):
     @rolehierarchy.check_permissions("Administrator")
     async def recalculate_invite_xp(self, inter: disnake.ApplicationCommandInteraction):
         """Berechnet die XP für Einladungen neu."""
-        await self.cupid_instance._recalculate_invite_xp(inter)        
+        await self.cupid_instance._recalculate_invite_xp(inter)
 
     @commands.slash_command(guild_ids=[854698446996766730])
     @rolehierarchy.check_permissions("Administrator")
@@ -266,7 +285,7 @@ class MyCommands(commands.Cog):
         await self.cupid_instance._deletedata_for_nonexistent_user(inter)
 
     @commands.slash_command(guild_ids=[854698446996766730])
-    async def random_anime_gif(self, inter: disnake.ApplicationCommandInteraction):        
+    async def random_anime_gif(self, inter: disnake.ApplicationCommandInteraction):
         """Sendet ein zufälliges Anime-GIF."""
         await self.join_instance._random_anime_gif(inter)
 
@@ -275,7 +294,7 @@ class MyCommands(commands.Cog):
     async def update_all_users_roles(self, inter: disnake.ApplicationCommandInteraction, send_level_up_messages: bool = False):
         """Aktualisiert die Rollen aller Benutzer basierend auf ihrem Level."""
         await self.level_instance._update_all_users_roles(inter, send_level_up_messages)
-    
+
     @commands.slash_command(guild_ids=[854698446996766730])
     @rolehierarchy.check_permissions("Administrator")
     async def calculate_message_xp(self, inter: disnake.ApplicationCommandInteraction):
@@ -284,7 +303,7 @@ class MyCommands(commands.Cog):
 
     @commands.slash_command(guild_ids=[854698446996766730])
     @rolehierarchy.check_permissions("Administrator")
-    async def recalculate_experience(self, inter: disnake.ApplicationCommandInteraction, send_level_up_messages: bool = False):        
+    async def recalculate_experience(self, inter: disnake.ApplicationCommandInteraction, send_level_up_messages: bool = False):
         """Berechnet die XP für alle Benutzer neu."""
         await self.level_instance._recalculate_experience(inter, send_level_up_messages)
 
@@ -295,8 +314,7 @@ class MyCommands(commands.Cog):
         await self.level_instance._update_levels(inter)
 
     @commands.slash_command(guild_ids=[854698446996766730])
-    @rolehierarchy.check_permissions("Administrator")
-    async def top_users(self, inter: disnake.ApplicationCommandInteraction):      
+    async def top_users(self, inter: disnake.ApplicationCommandInteraction):
         """Zeigt die Top Benutzer basierend auf ihrer XP an."""
         await self.level_instance._top_users(inter)
 
@@ -319,19 +337,22 @@ class MyCommands(commands.Cog):
         await self.level_instance._add_xp_to_voice_channel(inter, channel_id, xp, reason)
 
     @commands.slash_command(guild_ids=[854698446996766730])
-    @rolehierarchy.check_permissions("Administrator")
+    @rolehierarchy.check_permissions("Team")
     async def activity_since(self, inter: disnake.ApplicationCommandInteraction, start_date: str, user: disnake.User = None):
         """Zeigt die Aktivität eines Benutzers seit einem bestimmten Datum an."""
         await self.level_instance._activity_since(inter, start_date, user)
 
     @commands.slash_command(guild_ids=[854698446996766730])
     @rolehierarchy.check_permissions("Senior Supporter")
-    async def timeout(self, inter: disnake.ApplicationCommandInteraction, 
-                        member: disnake.Member, 
-                        duration: str = commands.Param(name="dauer", description="Dauer des Timeouts in Sek., Min., Std., Tagen oder Jahre.(Bsp.: 0s0m0h0d0j)"),
-                        reason: str = commands.Param(name="begründung", description="Grund für den Timeout", default="Kein Grund angegeben"),
-                        warn: bool = commands.Param(name="warn", description="Soll eine Warnung erstellt werden?", default=False),
-                        warn_level: int = commands.Param(name="warnstufe", description="Warnstufe (1-3) | Default = 1 wenn warn_level = True", default=1)):
+    async def timeout(self, inter: disnake.ApplicationCommandInteraction,
+                      member: disnake.Member,
+                      duration: str = commands.Param(
+                          name="dauer", description="Dauer des Timeouts in Sek., Min., Std., Tagen oder Jahre.(Bsp.: 0s0m0h0d0j)"),
+                      reason: str = commands.Param(
+                          name="begründung", description="Grund für den Timeout", default="Kein Grund angegeben"),
+                      warn: bool = commands.Param(
+                          name="warn", description="Soll eine Warnung erstellt werden?", default=False),
+                      warn_level: int = commands.Param(name="warnstufe", description="Warnstufe (1-3) | Default = 1 wenn warn_level = True", default=1)):
         """Timeout einen Benutzer für eine bestimmte Dauer und optional eine Warnung erstellen."""
         await self.mod_instance._timeout(inter, member, duration, reason, warn, warn_level)
 
@@ -343,51 +364,69 @@ class MyCommands(commands.Cog):
 
     @commands.slash_command(guild_ids=[854698446996766730])
     @rolehierarchy.check_permissions("Test-Supporter")
-    async def warn_add(self, inter: disnake.ApplicationCommandInteraction, user: disnake.User, reason: str, level: int = 1, proof: disnake.Attachment = None, show: str = "True"):        
+    async def warn_add(self, inter: disnake.ApplicationCommandInteraction,
+                       user: disnake.User,
+                       reason: str = commands.Param(
+                           name="begründung", description="Grund für die Warnung", default="Kein Grund angegeben"),
+                       level: int = commands.Param(
+                           name="warnstufe", description="Warnstufe (1-3) | Default = 1", default=1),
+                       proof: disnake.Attachment = commands.Param(
+                           name="beweis", description="Ein Bild als Beweis für die Warnung und zur Dokumentation", default=None),
+                       show: str = commands.Param(name="anzeigen", description="Soll die Warnung angezeigt werden?", default="True")):
         """Erstellt eine Warnung für einen Benutzer."""
         await self.mod_instance._warn_add(inter, user, reason, level, proof, show)
 
     @commands.slash_command(guild_ids=[854698446996766730])
     @rolehierarchy.check_permissions("Moderator")
-    async def warn_delete(self, inter: disnake.ApplicationCommandInteraction, caseid: int):
+    async def warn_delete(self, inter: disnake.ApplicationCommandInteraction,
+                          caseid: int = commands.Param(name="warn_id", description="ID der Warnung, die gelöscht werden soll")):
         """Markiert eine Warnung als gelöscht basierend auf der Warn ID."""
         await self.mod_instance._warn_delete(inter, caseid)
 
     @commands.slash_command(guild_ids=[854698446996766730])
-    @rolehierarchy.check_permissions("Supporter")                   
-    async def ban(self, 
-                inter: disnake.ApplicationCommandInteraction, 
-                member: disnake.Member = commands.Param(name="benutzer", description="Der Benutzer, der gebannt werden soll."), 
-                reason: str = commands.Param(name="begründung", description="Grund warum der Benutzer gebannt werden soll", default="Kein Grund angegeben"),
-                duration: str = commands.Param(name="dauer", description="Dauer des Bans in Sek., Min., Std., Tagen oder Jahre.(Bsp.: 0s0m0h0d0j) Nichts angegeben = Dauerhaft", default="0s"),
-                delete_days: int = commands.Param(name="geloeschte_nachrichten", description="Anzahl der Tage, für die Nachrichten des Benutzers gelöscht werden sollen. (0-7, Default = 0)", default=0),
-                proof: disnake.Attachment = commands.Param(name="beweis", description="Ein Bild als Beweis für den Ban und zur Dokumentation", default=None)):
+    @rolehierarchy.check_permissions("Supporter")
+    async def ban(self,
+                  inter: disnake.ApplicationCommandInteraction,
+                  member: disnake.Member = commands.Param(
+                      name="benutzer", description="Der Benutzer, der gebannt werden soll."),
+                  reason: str = commands.Param(
+                      name="begründung", description="Grund warum der Benutzer gebannt werden soll", default="Kein Grund angegeben"),
+                  duration: str = commands.Param(
+                      name="dauer", description="Dauer des Bans in Sek., Min., Std., Tagen oder Jahre.(Bsp.: 0s0m0h0d0j) Nichts angegeben = Dauerhaft", default="0s"),
+                  delete_days: int = commands.Param(
+                      name="geloeschte_nachrichten", description="Anzahl der Tage, für die Nachrichten des Benutzers gelöscht werden sollen. (0-7, Default = 0)", default=0),
+                  proof: disnake.Attachment = commands.Param(name="beweis", description="Ein Bild als Beweis für den Ban und zur Dokumentation", default=None)):
         """Banne einen Benutzer und speichere ein Bild als Beweis."""
         await self.mod_instance._ban(inter, member, reason, duration, delete_days, proof)
 
     @commands.slash_command(guild_ids=[854698446996766730])
     @rolehierarchy.check_permissions("Senior Supporter")
-    async def unban(self, inter: disnake.ApplicationCommandInteraction, 
-                    userid: int = commands.param(name="userid", description="Hier kannst du die UserID unserer Datenbank angeben.", default=0), 
-                    username: str = commands.Param(name="username", description="Hier kannst du den Benutzernamen angeben, falls die UserID nicht bekannt ist.", default=""), 
+    async def unban(self, inter: disnake.ApplicationCommandInteraction,
+                    userid: int = commands.param(
+                        name="userid", description="Hier kannst du die UserID unserer Datenbank angeben.", default=0),
+                    username: str = commands.Param(
+                        name="username", description="Hier kannst du den Benutzernamen angeben, falls die UserID nicht bekannt ist.", default=""),
                     reason: str = commands.Param(name="begruendung", description="Bitte gebe eine Begründung für den Unban an.", default="Kein Grund angegeben")):
         """Entbanne einen Benutzer von diesem Server."""
         await self.mod_instance._unban(inter, userid, username, reason)
 
     @commands.slash_command(guild_ids=[854698446996766730])
     @rolehierarchy.check_permissions("Supporter")
-    async def kick(self, 
-                inter: disnake.ApplicationCommandInteraction, 
-                member: disnake.Member = commands.Param(name="benutzer", description="Der Benutzer, der gekickt werden soll."), 
-                reason: str = commands.Param(name="begründung", description="Grund warum der Benutzer gekickt werden soll", default="Kein Grund angegeben"),
-                proof: disnake.Attachment = commands.Param(name="beweis", description="Ein Bild als Beweis für den Kick und zur Dokumentation", default=None)):
+    async def kick(self,
+                   inter: disnake.ApplicationCommandInteraction,
+                   member: disnake.Member = commands.Param(
+                       name="benutzer", description="Der Benutzer, der gekickt werden soll."),
+                   reason: str = commands.Param(
+                       name="begründung", description="Grund warum der Benutzer gekickt werden soll", default="Kein Grund angegeben"),
+                   proof: disnake.Attachment = commands.Param(name="beweis", description="Ein Bild als Beweis für den Kick und zur Dokumentation", default=None)):
         """Kicke einen Benutzer und speichere ein Bild als Beweis."""
         await self.mod_instance._kick(inter, member, reason, proof)
 
     @commands.slash_command(guild_ids=[854698446996766730])
     @commands.has_permissions(manage_messages=True)
-    async def delete_messages_after(self, inter: disnake.ApplicationCommandInteraction, 
-                                    channel: disnake.TextChannel = commands.Param(name="channel", description="Der Kanal, in dem die Nachrichten gelöscht werden sollen."),
+    async def delete_messages_after(self, inter: disnake.ApplicationCommandInteraction,
+                                    channel: disnake.TextChannel = commands.Param(
+                                        name="channel", description="Der Kanal, in dem die Nachrichten gelöscht werden sollen."),
                                     timestamp: str = commands.Param(name="timestamp", description="Der Zeitpunkt (im Format YYYY-MM-DD HH:MM:SS) nach dem die Nachrichten gelöscht werden sollen.")):
         """Lösche alle Nachrichten in einem Kanal nach einer bestimmten Uhrzeit."""
         await self.mod_instance._delete_messages_after(inter, channel, timestamp)
@@ -404,8 +443,8 @@ class MyCommands(commands.Cog):
         await self.roleassignment_instance._create_roles_embeds(inter, channel)
 
     @commands.slash_command(guild_ids=[854698446996766730])
-    @rolehierarchy.check_permissions("Co Owner")    
-    async def create_nsfwrules_embeds(self, inter: disnake.ApplicationCommandInteraction, channel: disnake.TextChannel):        
+    @rolehierarchy.check_permissions("Co Owner")
+    async def create_nsfwrules_embeds(self, inter: disnake.ApplicationCommandInteraction, channel: disnake.TextChannel):
         """Erstellt Embeds für alle NSFW-Regeln."""
         await self.roleassignment_instance._create_nsfwrules_embeds(inter, channel)
 
@@ -438,12 +477,12 @@ class MyCommands(commands.Cog):
         await self.voice_instance._voicerename(inter, name)
 
     @commands.slash_command(guild_ids=[854698446996766730])
-    async def voicerename(self, inter: disnake.ApplicationCommandInteraction, name: str):    
+    async def voicerename(self, inter: disnake.ApplicationCommandInteraction, name: str):
         """Ändert den Namen des Sprachkanals."""
         await self.voice_instance._voicerename(inter, name)
 
     @commands.slash_command(guild_ids=[854698446996766730])
-    async def setlimit(self, inter: disnake.ApplicationCommandInteraction, limit: int):        
+    async def setlimit(self, inter: disnake.ApplicationCommandInteraction, limit: int):
         """Ändert das Limit des Sprachkanals."""
         await self.voice_instance._setlimit(inter, limit)
 
@@ -511,7 +550,7 @@ class MyCommands(commands.Cog):
     async def joinrequest(self, inter: disnake.ApplicationCommandInteraction, channel: disnake.VoiceChannel):
         """Sendet eine Anfrage, um den Sprachkanal zu betreten."""
         await self.voice_instance._joinrequest(inter, channel)
-        
+
     @commands.slash_command(guild_ids=[854698446996766730])
     @rolehierarchy.check_permissions("Administrator")
     async def draw_giveaway(self, inter: disnake.ApplicationCommandInteraction, giveaway_id: int):
@@ -534,5 +573,17 @@ class MyCommands(commands.Cog):
         """Erstellt ein Gewinnspiel."""
         await self.giveaway_instance._create_giveaway(inter, channel, title, description, prize, level_based, allowed_roles, excluded_roles)
 
-def setupCommands(bot: commands.Bot):
-    bot.add_cog(MyCommands(bot))
+        # Replace with your guild ID
+    @commands.slash_command(guild_ids=[854698446996766730])
+    async def set_activste_user_color(self, inter: disnake.ApplicationCommandInteraction, color: str = commands.Param(name="color", description="Hier brauchst du einen Farbcode. (Bsp.: #ff0000)")):
+        """Manually change the color of a specific role."""
+        await inter.response.defer()
+        if self.rolemanager.get_role(self.bot.guilds[0].id, 1342437571531116634) in inter.user.roles:
+            await self.level_instance._change_role_color(1342437571531116634, color)
+        else:
+            await inter.edit_original_response(content="Nur die Person mit der Rolle darf sie auch ändern.")
+        await inter.edit_original_response(content=f"Changed color of role with ID {1342437571531116634} to {color}.")
+
+
+def setupCommands(bot: commands.Bot, rolemamaner: RoleManager):
+    bot.add_cog(MyCommands(bot, rolemamaner))

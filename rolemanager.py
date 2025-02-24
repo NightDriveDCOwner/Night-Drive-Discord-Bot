@@ -19,29 +19,25 @@ class RoleManager:
 
     async def cache_roles(self):
         for guild in self.bot.guilds:
+            self.role_cache[guild.id] = {}
             for role in guild.roles:
-                self.role_cache[role.id] = role
-        self.logger.debug(f"Role cache initialized: {self.role_cache}")
+                self.role_cache[guild.id][role.id] = role
 
-    def get_role_name(self, role_id: int) -> str:
-        role = self.role_cache.get(role_id, None)
-        role_name = role.name if role else None
-        self.logger.debug(f"Retrieved role name for ID {role_id}: {role_name}")
-        return role_name
+    def get_role_name(self, guild_id: int, role_id: int) -> str:
+        role = self.role_cache.get(guild_id, {}).get(role_id, None)
+        return role.name if role else None
 
-    def get_role_id(self, role_name: str) -> int:
-        for role_id, role in self.role_cache.items():
+    def get_role_id(self, guild_id: int, role_name: str) -> int:
+        for role_id, role in self.role_cache.get(guild_id, {}).items():
             if role.name == role_name:
                 return role_id
         return None
 
-    def get_role(self, role_id: int) -> disnake.Role:
-        role = self.role_cache.get(role_id, None)
-        self.logger.debug(f"Retrieved role for ID {role_id}: {role}")
-        return role
+    def get_role(self, guild_id: int, role_id: int) -> disnake.Role:
+        return self.role_cache.get(guild_id, {}).get(role_id, None)
 
-    def get_role_by_name(self, role_name: str) -> disnake.Role:
-        for role in self.role_cache.values():
+    def get_role_by_name(self, guild_id: int, role_name: str) -> disnake.Role:
+        for role in self.role_cache.get(guild_id, {}).values():
             if role.name == role_name:
                 return role
         return None
