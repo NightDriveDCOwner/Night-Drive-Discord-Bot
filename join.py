@@ -20,7 +20,7 @@ class Join(commands.Cog):
     def __init__(self, bot: commands.Bot, rolemanager: RoleManager):
         self.bot = bot
         self.logger = logging.getLogger("Join")
-        self.globalfile = self.bot.get_cog('Globalfile')
+        self.globalfile : Globalfile = self.bot.get_cog('Globalfile')
         self.invites_before_join = {}
         self.stats_channels = {}
         self.rolemanager = rolemanager
@@ -133,6 +133,8 @@ class Join(commands.Cog):
                     if leaved_status and leaved_status[0] == 1:
                         await self.check_member_update(member)
                         await self.process_member_join(member)
+        
+        self.logger.info("Join Cog is ready.")	
 
     @exception_handler
     async def _random_anime_gif(self, inter: disnake.ApplicationCommandInteraction):
@@ -168,8 +170,7 @@ class Join(commands.Cog):
 
     @exception_handler
     async def is_member_in_user_table(self, member_id: int) -> bool:
-
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT 1 FROM USER WHERE DISCORDID = ?", (str(member_id),))
+        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT 1 FROM USER WHERE DISCORDID = ? AND LEAVED = 0", (str(member_id),))
         return (await cursor.fetchone()) is not None
 
     @exception_handler
@@ -332,13 +333,13 @@ class Join(commands.Cog):
             embed.set_footer(
                 text="Wir wünschen dir viel Spaß auf unserem Server!")
 
-            userrecord = await self.globalfile.get_user_record(discordid=member.id)
+            userrecord = await self.globalfile.get_user_record(guild=member.guild, discordid=member.id)
             if userrecord:
                 user_id = userrecord['ID']
 
-                cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT 1 FROM EXPERIENCE WHERE USERID = ?", (user_id,))
+                cursor = await DatabaseConnectionManager.execute_sql_statement(member.guild.id, member.guild.name, "SELECT 1 FROM EXPERIENCE WHERE USERID = ?", (user_id,))
                 if not (await cursor.fetchone()):
-                    await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "INSERT INTO EXPERIENCE (USERID, MESSAGE, VOICE, LEVEL, INVITE) VALUES (?, 0, 0, 1, 0)", (user_id,))
+                    await DatabaseConnectionManager.execute_sql_statement(member.guild.id, member.guild.name, "INSERT INTO EXPERIENCE (USERID, MESSAGE, VOICE, LEVEL, INVITE) VALUES (?, 0, 0, 1, 0)", (user_id,))
 
             await member.send(embed=embed)
         except Exception as e:
@@ -349,17 +350,44 @@ class Join(commands.Cog):
         self.logger.info(
             f"{member.name} (ID: {member.id}) joined Server {member.guild.name}.")
 
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT ID FROM USER WHERE DISCORDID = ?", (str(member.id),))
+        cursor = await DatabaseConnectionManager.execute_sql_statement(member.guild.id, member.guild.name, "SELECT ID FROM USER WHERE DISCORDID = ?", (str(member.id),))
         result = (await cursor.fetchone())
 
         if not result:
-            await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "INSERT INTO USER (DISCORDID, USERNAME) VALUES (?, ?)", (str(member.id), member.name))
-
+            current_date = (await self.globalfile.get_current_time()).strftime('%Y-%m-%d')
+            await DatabaseConnectionManager.execute_sql_statement(member.guild.id, member.guild.name, "INSERT INTO USER (DISCORDID, USERNAME, JOINED_DATE) VALUES (?, ?, ?)", (str(member.id), member.name, current_date))
+            user_record = await self.globalfile.get_user_record(guild=member.guild, discordid=str(member.id))
+            cursor = await DatabaseConnectionManager.execute_sql_statement(member.guild.id, member.guild.name,
+                                                                        "SELECT SETTING, VALUE FROM USER_SETTINGS WHERE USERID = ? AND SETTING IN ('profile_picture', 'status', 'notes', 'warnings')", (user_record['ID'],))
+            settings = {row[0]: row[1] for row in await cursor.fetchall()}
+            
+            # Set default values if not present
+            default_settings = {
+                'xp': 'everyone',
+                'birthday': 'nobody',
+                'notes': 'nobody',
+                'warnings': 'nobody',
+                'friendlist': 'friends',
+                'introduction': 'friends'
+            }
+            
+            # Insert missing default settings into the databas                
+            for key, value in default_settings.items():
+                if key not in settings:
+                    settings[key] = value
+                    await DatabaseConnectionManager.execute_sql_statement(member.guild.id, member.guild.name, """
+                        INSERT INTO USER_SETTINGS (USERID, SETTING, VALUE)
+                        VALUES (?, ?, ?)
+                    """, (user_record['ID'], key, value))
             self.logger.info(
                 f"Neuer Benutzer {member.name} (ID: {member.id}) zur USER-Tabelle hinzugefügt.")
         else:
-            await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "UPDATE USER SET LEAVED = 0 WHERE DISCORDID = ?", (str(member.id),))
-
+            current_date = (await self.globalfile.get_current_time()).strftime('%Y-%m-%d')
+            await DatabaseConnectionManager.execute_sql_statement(
+                member.guild.id, member.guild.name,
+                """UPDATE USER SET LEAVED = 0, JOINED_DATE = ?, LEAVED_DATE = ? WHERE DISCORDID = ?""", 
+                (current_date, "", str(member.id))
+            )
             self.logger.info(
                 f"Benutzer {member.name} (ID: {member.id}) existiert bereits in der USER-Tabelle.")
 
@@ -370,7 +398,7 @@ class Join(commands.Cog):
                 current_date = (await self.globalfile.get_current_time()).strftime('%Y-%m-%d')
 
                 # Hole die interne Benutzer-ID des Einladers
-                inviter_record = await self.globalfile.get_user_record(discordid=str(inviter_id))
+                inviter_record = await self.globalfile.get_user_record(guild=member.guild, discordid=str(inviter_id))
                 if not inviter_record:
                     self.logger.error(
                         f"Einlader {invite.inviter.name} (ID: {inviter_id}) nicht in der USER-Tabelle gefunden.")
@@ -378,27 +406,27 @@ class Join(commands.Cog):
 
                 inviter_user_id = inviter_record['ID']
 
-                cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT COUNT(*) FROM INVITE_XP WHERE USERID = ? AND DATE = ?", (inviter_user_id, current_date))
+                cursor = await DatabaseConnectionManager.execute_sql_statement(member.guild.id, member.guild.name, "SELECT COUNT(*) FROM INVITE_XP WHERE USERID = ? AND DATE = ?", (inviter_user_id, current_date))
                 result = (await cursor.fetchone())
 
                 if result[0] == 0:
-                    await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "INSERT INTO INVITE_XP (USERID, DATE, COUNT) VALUES (?, ?, ?)", (inviter_user_id, current_date, 1))
+                    await DatabaseConnectionManager.execute_sql_statement(member.guild.id, member.guild.name, "INSERT INTO INVITE_XP (USERID, DATE, COUNT) VALUES (?, ?, ?)", (inviter_user_id, current_date, 1))
                 else:
-                    await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "UPDATE INVITE_XP SET COUNT = COUNT + 1 WHERE USERID = ? AND DATE = ?", (inviter_user_id, current_date))
+                    await DatabaseConnectionManager.execute_sql_statement(member.guild.id, member.guild.name, "UPDATE INVITE_XP SET COUNT = COUNT + 1 WHERE USERID = ? AND DATE = ?", (inviter_user_id, current_date))
 
                 # Aktualisiere das INVITEID-Feld in der USER-Tabelle
-                cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT ID FROM INVITE_XP WHERE USERID = ? AND DATE = ?", (inviter_user_id, current_date))
+                cursor = await DatabaseConnectionManager.execute_sql_statement(member.guild.id, member.guild.name, "SELECT ID FROM INVITE_XP WHERE USERID = ? AND DATE = ?", (inviter_user_id, current_date))
                 invite_id = (await cursor.fetchone())[0]
-                await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "UPDATE USER SET INVITEID  = ? WHERE DISCORDID = ?", (invite_id, str(member.id)))
+                await DatabaseConnectionManager.execute_sql_statement(member.guild.id, member.guild.name, "UPDATE USER SET INVITEID  = ? WHERE DISCORDID = ?", (invite_id, str(member.id)))
                 load_dotenv(dotenv_path="envs/settings.env", override=True)
                 factor = int(os.getenv("INVITEXP_FACTOR", 50))
                 # Aktualisiere INVITEXP in der EXPERIENCE Tabelle
 
-                cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT SECONDACC_USERID FROM USER WHERE ID = ?", (inviter_user_id,))
+                cursor = await DatabaseConnectionManager.execute_sql_statement(member.guild.id, member.guild.name, "SELECT SECONDACC_USERID FROM USER WHERE ID = ?", (inviter_user_id,))
                 secondacc_userid = (await cursor.fetchone())[0]
                 if secondacc_userid is None:
                     # Aktualisiere INVITEXP in der EXPERIENCE Tabelle
-                    await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "UPDATE EXPERIENCE SET INVITE = INVITE + ? WHERE USERID = ?", (factor * 60, inviter_user_id))
+                    await DatabaseConnectionManager.execute_sql_statement(member.guild.id, member.guild.name, "UPDATE EXPERIENCE SET INVITE = INVITE + ? WHERE USERID = ?", (factor * 60, inviter_user_id))
 
                 self.logger.info(
                     f"Einladung von {invite.inviter.name} (ID: {inviter_id}) wurde angenommen. INVITE_XP aktualisiert und USER-Tabelle aktualisiert.")
@@ -451,7 +479,7 @@ class Join(commands.Cog):
 
                 # Speichere den Ban in der Datenbank
 
-                cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name,
+                cursor = await DatabaseConnectionManager.execute_sql_statement(member.guild.id, member.guild.name,
                                                                                "INSERT INTO BAN (USERID, REASON, BANNED_TO, DELETED_DAYS) VALUES (?, ?, ?, ?)",
                                                                                (member.id, f"Account is younger than {min_account_age_days} days.", ban_end_timestamp, 1)
                                                                                )
@@ -509,9 +537,9 @@ class Join(commands.Cog):
     async def create_stats_category(self):
         for guild in self.bot.guilds:
             category = disnake.utils.get(
-                guild.categories, name="⏤ Serverstatistiken")
+                guild.categories, name="╭┈➤ Serverstatistiken")
             if not category:
-                category = await guild.create_category("⏤ Serverstatistiken")
+                category = await guild.create_category("╭┈➤ Serverstatistiken")
 
             # Verschiebe die Kategorie an die oberste Position
             await category.edit(position=0)
@@ -570,11 +598,11 @@ class Join(commands.Cog):
                 await log_channel.send(embed=embed)
 
             # Setze das Feld LEAVED in der USER-Tabelle auf 1
+            current_date = current_datetime.strftime('%Y-%m-%d')
+            await DatabaseConnectionManager.execute_sql_statement(member.guild.id, member.guild.name, "UPDATE USER SET LEAVED = 1, LEAVED_DATE = ? WHERE DISCORDID = ?", (current_date,str(member.id)))
 
-            await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "UPDATE USER SET LEAVED = 1 WHERE DISCORDID = ?", (str(member.id),))
-
-            user_record = await self.globalfile.get_user_record(discordid=member.id)
-            await self.globalfile.delete_user_data(user_record['ID'])
+            user_record = await self.globalfile.get_user_record(guild=member.guild, discordid=member.id)
+            await self.globalfile.delete_user_data(user_record['ID'], member.guild, member.guild)
         except Exception as e:
             self.logger.critical(f"Fehler aufgetreten [on_member_remove]: {e}")
 

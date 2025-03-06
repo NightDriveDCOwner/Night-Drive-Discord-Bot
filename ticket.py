@@ -10,6 +10,10 @@ import sqlite3
 from typing import Union
 from exceptionhandler import exception_handler
 from rolemanager import RoleManager
+import disnake
+from disnake.ext import commands
+from disnake import SelectOption
+from disnake.ui import Select, View
 
 
 class Ticket(commands.Cog):
@@ -39,11 +43,12 @@ class Ticket(commands.Cog):
             1323005558730657812)
         self.team_role = self.rolemanager.get_role(
             self.bot.guilds[0].id, 1235534762609872899)
-        self.bot.add_view(await self.create_bewerbung_view())
-        self.bot.add_view(await self.create_ticket_view())
-        self.bot.add_view(await self.create_admin_ticket_view())
-        self.bot.add_view(await self.create_verify_ticket_view())
-        self.logger.debug("Ticket Cog has been loaded.")
+        guild = await self.bot.fetch_guild(854698446996766730)
+        self.bot.add_view(await self.create_bewerbung_view(guild))
+        self.bot.add_view(await self.create_ticket_view(guild))
+        self.bot.add_view(await self.create_admin_ticket_view(guild))
+        self.bot.add_view(await self.create_verify_ticket_view(guild))
+        self.logger.info("Ticket Cog is ready.")
 
     @exception_handler
     async def fetch_channel_messages(self, channel: disnake.TextChannel):
@@ -120,34 +125,34 @@ class Ticket(commands.Cog):
         with open(file_path, 'w', encoding='utf-8') as file:
             file.write(html_content)
 
-    @exception_handler
-    async def create_bewerbung_view(self):
-        bewerbung_button = disnake.ui.Button(label="Öffne ein Bewerbungs Ticket!", emoji=await self.globalfile.get_manual_emoji("incoming_envelope"), style=disnake.ButtonStyle.blurple, custom_id="bewerbung_button")
+
+    async def create_bewerbung_view(self, guild: disnake.Guild):
+        bewerbung_button = disnake.ui.Button(
+            label="Öffne ein Bewerbungs Ticket!", 
+            emoji=await self.globalfile.get_manual_emoji("incoming_envelope"), 
+            style=disnake.ButtonStyle.blurple, custom_id="bewerbung_button")
         bewerbung_view = disnake.ui.View(timeout=None)
         bewerbung_view.add_item(bewerbung_button)
         return bewerbung_view
 
-    @exception_handler
-    async def create_admin_ticket_view(self):
-        emoji = await self.globalfile.get_emoji_by_name(emoji_name="owner")
+    async def create_admin_ticket_view(self, guild: disnake.Guild):
+        emoji = await self.globalfile.get_emoji_by_name(emoji_name="owner", guild=guild)
         admin_ticket_button = disnake.ui.Button(
             label="Öffne ein Admin Ticket!", emoji=emoji, style=disnake.ButtonStyle.blurple, custom_id="admin_ticket_button")
         admin_ticket_view = disnake.ui.View(timeout=None)
         admin_ticket_view.add_item(admin_ticket_button)
         return admin_ticket_view
-
-    @exception_handler
-    async def create_ticket_view(self):
-        emoji = await self.globalfile.get_emoji_by_name(emoji_name="blackhammerids")
+    
+    async def create_ticket_view(self, guild: disnake.Guild):
+        emoji = await self.globalfile.get_emoji_by_name(emoji_name="blackhammerids", guild=guild)
         ticket_button = disnake.ui.Button(
             label=f"Öffne ein Support Ticket!", emoji=emoji, style=disnake.ButtonStyle.blurple, custom_id="ticket_button")
         ticket_view = disnake.ui.View(timeout=None)
         ticket_view.add_item(ticket_button)
         return ticket_view
 
-    @exception_handler
-    async def create_verify_ticket_view(self):
-        emoji = await self.globalfile.get_emoji_by_name(emoji_name="verified")
+    async def create_verify_ticket_view(self, guild: disnake.Guild):
+        emoji = await self.globalfile.get_emoji_by_name(emoji_name="verified", guild=guild)
         verify_ticket_button = disnake.ui.Button(
             label="Verify Ticket erstellen!", emoji=emoji, style=disnake.ButtonStyle.green, custom_id="verify_ticket_button")
         verify_ticket_view = disnake.ui.View(timeout=None)
@@ -158,14 +163,8 @@ class Ticket(commands.Cog):
     @commands.Cog.listener()
     async def on_interaction(self, interaction: disnake.Interaction):
         if interaction.type == disnake.InteractionType.component:
-            custom_id = interaction.data.get("custom_id")
-            if custom_id == "bewerbung_button":
-                await self.bewerbung_button_callback(interaction)
-            elif custom_id == "ticket_button":
-                await self.ticket_button_callback(interaction)
-            elif custom_id == "admin_ticket_button":
-                await self.admin_ticket_button_callback(interaction)
-            elif custom_id == "verify_ticket_button":
+            custom_id = interaction.data.get("custom_id")                        
+            if custom_id == "verify_ticket_button":
                 await self.verify_ticket_button_callback(interaction)
             elif custom_id.startswith("claim_button_"):
                 ticket_id = int(custom_id.split("_")[-1])
@@ -173,6 +172,14 @@ class Ticket(commands.Cog):
             elif custom_id.startswith("close_button_"):
                 ticket_id = int(custom_id.split("_")[-1])
                 await self.close_ticket(interaction, ticket_id)
+            elif custom_id == "ticket_select":
+                selected_value = interaction.data.get("values")[0]
+                if selected_value == "bewerbung":
+                    await self.create_ticket_channel(interaction, "Bewerbung")
+                elif selected_value == "admin":
+                    await self.create_ticket_channel(interaction, "Admin Ticket")
+                elif selected_value == "support":
+                    await self.create_ticket_channel(interaction, "Support Ticket")
             elif custom_id == "delete_channel_button":
                 if self.team_role in interaction.user.roles:
                     await interaction.channel.delete()
@@ -181,7 +188,7 @@ class Ticket(commands.Cog):
 
     @exception_handler
     async def check_and_update_message(self, channel: disnake.TextChannel, embed, message_type, button_view):
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT MESSAGEID FROM UNIQUE_MESSAGE WHERE MESSAGETYPE = ?", (message_type,))
+        cursor = await DatabaseConnectionManager.execute_sql_statement(channel.guild.id, channel.guild.name, "SELECT MESSAGEID FROM UNIQUE_MESSAGE WHERE MESSAGETYPE = ?", (message_type,))
         result = (await cursor.fetchone())
 
         if result:
@@ -194,11 +201,11 @@ class Ticket(commands.Cog):
 
             # Aktualisiere die MESSAGEID in der Datenbank
             message = await channel.send(embed=embed, view=button_view)
-            cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "UPDATE UNIQUE_MESSAGE SET MESSAGEID = ? WHERE MESSAGETYPE = ?", (message.id, message_type))
+            cursor = await DatabaseConnectionManager.execute_sql_statement(channel.guild.id, channel.guild.name, "UPDATE UNIQUE_MESSAGE SET MESSAGEID = ? WHERE MESSAGETYPE = ?", (message.id, message_type))
         else:
             # Füge einen neuen Eintrag in die Datenbank ein
             message = await channel.send(embed=embed, view=button_view)
-            await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "INSERT INTO UNIQUE_MESSAGE (MESSAGETYPE, MESSAGEID) VALUES (?, ?)", (message_type, message.id))
+            await DatabaseConnectionManager.execute_sql_statement(channel.guild.id, channel.guild.name, "INSERT INTO UNIQUE_MESSAGE (MESSAGETYPE, MESSAGEID) VALUES (?, ?)", (message_type, message.id))
 
     @exception_handler
     async def create_ticket_channel(self, interaction: disnake.Interaction, ticket_type: str):
@@ -211,7 +218,7 @@ class Ticket(commands.Cog):
             return
 
         # Calculate the next Ticket ID
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT MAX(ID) FROM Ticket")
+        cursor = await DatabaseConnectionManager.execute_sql_statement(interaction.guild.id, interaction.guild.name, "SELECT MAX(ID) FROM Ticket")
         max_id = (await cursor.fetchone())[0]
         next_id = (max_id + 1) if max_id is not None else 1
 
@@ -248,7 +255,7 @@ class Ticket(commands.Cog):
 
         # Insert the new entry into the database
         created_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "INSERT INTO Ticket (ID, TICKETTYPE, USERID, CREATED_AT) VALUES (?, ?, ?, ?)", (next_id, ticket_type, interaction.user.id, created_at))
+        await DatabaseConnectionManager.execute_sql_statement(interaction.guild.id, interaction.guild.name, "INSERT INTO Ticket (ID, TICKETTYPE, USERID, CREATED_AT) VALUES (?, ?, ?, ?)", (next_id, ticket_type, interaction.user.id, created_at))
 
         # Create the Claim button
         claim_button = disnake.ui.Button(
@@ -302,7 +309,7 @@ class Ticket(commands.Cog):
             return
 
         # Überprüfe, ob das Ticket bereits zugewiesen wurde
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT ASSIGNED FROM Ticket WHERE ID = ?", (ticket_id,))
+        cursor = await DatabaseConnectionManager.execute_sql_statement(interaction.guild.id, interaction.guild.name, "SELECT ASSIGNED FROM Ticket WHERE ID = ?", (ticket_id,))
         assigned = (await cursor.fetchone())[0]
         if assigned:
             assigned_user = await self.bot.fetch_user(assigned)
@@ -311,7 +318,7 @@ class Ticket(commands.Cog):
             return
 
         # Aktualisiere das Ticket in der Datenbank
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "UPDATE Ticket SET ASSIGNED = ? WHERE ID = ?", (interaction.author.id, ticket_id))
+        cursor = await DatabaseConnectionManager.execute_sql_statement(interaction.guild.id, interaction.guild.name, "UPDATE Ticket SET ASSIGNED = ? WHERE ID = ?", (interaction.author.id, ticket_id))
 
         await interaction.response.send_message(f"Dieses Ticket wurde dem Teammitglied {interaction.author.mention} zugewiesen.")
         self.logger.info(
@@ -321,12 +328,12 @@ class Ticket(commands.Cog):
     async def close_ticket(self, interaction: disnake.Interaction, ticket_id: int):
         # Setze das Ticket in der Datenbank auf "DONE"
         await interaction.response.defer()
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "UPDATE TICKET SET DONE = 1 WHERE ID = ?", (ticket_id,))
+        cursor = await DatabaseConnectionManager.execute_sql_statement(interaction.guild.id, interaction.guild.name, "UPDATE TICKET SET DONE = 1 WHERE ID = ?", (ticket_id,))
 
         await self.export_chat(interaction.channel)
 
         # Schließe den Kanal nicht sofort, sondern sende ein Embed mit einem Button zum endgültigen Löschen
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT USERID, TICKETTYPE, CREATED_AT, ASSIGNED FROM Ticket WHERE ID = ?", (ticket_id,))
+        cursor = await DatabaseConnectionManager.execute_sql_statement(interaction.guild.id, interaction.guild.name, "SELECT USERID, TICKETTYPE, CREATED_AT, ASSIGNED FROM Ticket WHERE ID = ?", (ticket_id,))
         ticket_info = (await cursor.fetchone())
         user_id, ticket_type, created_at, assigned_id = ticket_info
         user = await self.bot.fetch_user(user_id)
@@ -424,69 +431,49 @@ class Ticket(commands.Cog):
         await self.create_ticket_channel(interaction, "Verify Ticket")
 
     @exception_handler
-    async def _create_ticket_embeds(self, inter: disnake.ApplicationCommandInteraction):
-        await inter.response.defer(ephemeral=True)
-        self.guild: disnake.Guild = inter.guild
-        guild = inter.guild
+    async def _create_ticket_embed_with_dropdown(self, inter: disnake.ApplicationCommandInteraction):
+        await inter.response.defer()
 
-        # Bewerbung Embed
-        bewerbung_embed = disnake.Embed(
-            title="Bewerbung",
+        # Embed erstellen
+        ticket_embed = disnake.Embed(            
+            title="Ticket Auswahl",
             description=(
+                "Wähle eine der folgenden Ticket-Arten aus:\n\n"
+                "**Bewerbung Ticket**\n"
                 "Erstelle ein Bewerbungsticket, wenn du dich als Supporter oder Entwickler bewerben möchtest. "
                 "Supporter-Rollen können ebenfalls Aufgaben wie Eventplanung und Promotion umfassen. "
-                "Entwickler-Rollen beinhalten die Arbeit an Projekten und technischen Aufgaben. "
-            ),
-            color=0x0080FF
-        )
-        bewerbung_embed.set_author(
-            name=self.bot.user.name, icon_url=guild.icon.url if guild.icon else None)
-        bewerbung_view = await self.create_bewerbung_view()
-
-        # Admin Ticket Embed
-        admin_ticket_embed = disnake.Embed(
-            title="Admin Ticket",
-            description=(
+                "Entwickler-Rollen beinhalten die Arbeit an Projekten und technischen Aufgaben.\n\n"
+                "**Admin Ticket**\n"
                 "Erstelle ein Admin-Ticket, wenn du administrative Anliegen hast oder ein Teammitglied melden möchtest. "
-                "Dieses Ticket ist für Themen, welche die Aufmerksamkeit des Administrations-Teams erfordern. "
-            ),
-            color=0x0080FF
-        )
-        admin_ticket_view = await self.create_admin_ticket_view()
-
-        # Ticket Embed
-        ticket_embed = disnake.Embed(
-            title="Support Ticket",
-            description=(
+                "Dieses Ticket ist für Themen, welche die Aufmerksamkeit des Administrations-Teams erfordern.\n\n"
+                "**Support Ticket**\n"
                 "Hier kannst du ein Support-Ticket öffnen, wenn du allgemeine Fragen hast oder einen Spieler melden möchtest. "
-                "Diese Art der Tickets sind für die generelle Unterstützung der User, welche die Aufmerksamkeit des Support-Teams erfordern. "
+                "Diese Art der Tickets sind für die generelle Unterstützung der User, welche die Aufmerksamkeit des Support-Teams erfordern."
             ),
             color=0x0080FF
         )
-        ticket_view = await self.create_ticket_view()
+        ticket_embed.set_author(name=self.bot.user.name, icon_url=self.bot.user.avatar.url)
 
-        verify_ticket_embed = disnake.Embed(
-            title="Verify Ticket",
-            description=(
-                "Erstelle ein Verify-Ticket, um dich zu verifizieren. "
-                "Im Zuge des Tickets wirst du aufgefordert, persönliche Informationen anzugeben, um deine Identität zu bestätigen. "
-                "Du wirst gebeten, ein Bild von dir mit einem Zettel zu senden, auf dem dein Discord-Tag und das aktuelle "
-                "Datum geschrieben sind. "
-                "Im Zuge des Tickets beantworten wir dir Fragen zu der Notwendigkeit der Verifizierung und der Erhebung dieser Informationen. "
-            ),
-            color=0x0080FF
+        # Dropdown-Optionen erstellen
+        options = [
+            SelectOption(label="Support Ticket", description="Erstelle ein Support-Ticket", emoji=await self.globalfile.get_emoji_by_name(emoji_name="blurpleban", guild=inter.guild) , value="support"),
+            SelectOption(label="Admin Ticket", description="Erstelle ein Admin-Ticket", emoji=await self.globalfile.get_emoji_by_name(emoji_name="reportmessage", guild=inter.guild) , value="admin"),
+            SelectOption(label="Bewerbung Ticket", description="Erstelle ein Bewerbungsticket", emoji=await self.globalfile.get_emoji_by_name(emoji_name="member", guild=inter.guild) , value="bewerbung")            
+        ]
+
+        # Dropdown-Menü erstellen
+        select = Select(
+            placeholder="Wähle eine Ticket-Art...",
+            options=options,
+            custom_id="ticket_select"
         )
-        verify_ticket_embed.set_author(
-            name=self.bot.user.name, icon_url=guild.icon.url if guild.icon else None)
-        verify_ticket_view = await self.create_verify_ticket_view()
 
-        await self.check_and_update_message(self.support_channel, bewerbung_embed, "BEWERBUNG TICKET", bewerbung_view)
-        await self.check_and_update_message(self.support_channel, admin_ticket_embed, "ADMIN TICKET", admin_ticket_view)
-        await self.check_and_update_message(self.support_channel, ticket_embed, "SUPPORT TICKET", ticket_view)
-        await self.check_and_update_message(self.verify_channel, verify_ticket_embed, "VERIFY TICKET", verify_ticket_view)
-        self.logger.info("Ticket Embeds have been created/updated.")
-        await inter.edit_original_response(content="Ticket Embeds wurden erstellt/aktualisiert.")
+        # View erstellen und Dropdown-Menü hinzufügen
+        view = View()
+        view.add_item(select)
 
+        # Embed und View senden
+        await inter.edit_original_response(embed=ticket_embed, view=view)
 
 def setupTicket(bot: commands.Bot, rolemanager: RoleManager):
     bot.add_cog(Ticket(bot, rolemanager))

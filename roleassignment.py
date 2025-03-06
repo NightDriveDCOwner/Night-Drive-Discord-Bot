@@ -15,7 +15,7 @@ import rolehierarchy
 from rolehierarchy import rolehierarchy
 from rolemanager import RoleManager
 from dbconnection import DatabaseConnectionManager
-
+from datetime import timedelta
 
 class RoleAssignment(commands.Cog):
     def __init__(self, bot: commands.Bot, rolemanager: RoleManager):
@@ -23,7 +23,7 @@ class RoleAssignment(commands.Cog):
         self.logger = logging.getLogger("RoleAssignment")
         logging_level = os.getenv("LOGGING_LEVEL", "INFO").upper()
         self.logger.setLevel(logging_level)
-        self.globalfile = self.bot.get_cog('Globalfile')
+        self.globalfile : Globalfile = self.bot.get_cog('Globalfile')
         self.role_hierarchy = rolehierarchy()
         self.team_roles = []
         self.rolemanager = rolemanager
@@ -51,8 +51,7 @@ class RoleAssignment(commands.Cog):
 
     @exception_handler
     @commands.Cog.listener()
-    async def on_ready(self):
-        self.logger.debug("RoleAssignment is ready.")
+    async def on_ready(self):        
         self.beichte_channel = self.bot.get_channel(
             1338586807700557965)  # Replace with your Beichte channel ID
         self.seelsorge_channel_id = 1068973683361726596
@@ -65,10 +64,11 @@ class RoleAssignment(commands.Cog):
         self.team_channel = self.bot.get_channel(1066798419470983269)
         self.team_roles = [self.rolemanager.get_role(self.bot.guilds[0].id,
                                                      role_id) for role_id in self.role_hierarchy.role_hierarchy if self.rolemanager.get_role(self.bot.guilds[0].id, role_id)]
+        self.logger.info("RoleAssignment Cog is ready.")
 
     @exception_handler
     async def create_embed_message(self, channel: disnake.TextChannel, message_type: str):
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT * FROM UNIQUE_MESSAGE WHERE MESSAGETYPE = ?", (message_type,))
+        cursor = await DatabaseConnectionManager.execute_sql_statement(channel.guild.id, channel.guild.name, "SELECT * FROM UNIQUE_MESSAGE WHERE MESSAGETYPE = ?", (message_type,))
         result = (await cursor.fetchone())
         role_count = sum(1 for i in range(1, 31) if result[7 + (i - 1) * 2])
         if not result:
@@ -97,8 +97,7 @@ class RoleAssignment(commands.Cog):
                         description += f"{emojifetched} = <@&{role.id}>\n"
                     else:
                         try:
-                            emojifetched = self.globalfile.get_emoji_by_name(
-                                emoji)
+                            emojifetched = await self.globalfile.get_emoji_by_name(emoji, channel.guild)
                             if hasattr(emojifetched, 'id') and emojifetched.id is not None:
                                 description += f"<:{emojifetched.name}:{emojifetched.id}> = {role.name}\n"
                             elif hasattr(emojifetched, 'name') and emojifetched.name is not None and message_type == "COLOR":
@@ -143,11 +142,11 @@ class RoleAssignment(commands.Cog):
             view.add_item(select)
             await message.edit(view=view)
 
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "UPDATE UNIQUE_MESSAGE SET MESSAGEID = ? WHERE MESSAGETYPE = ?", (message.id, message_type))
+        cursor = await DatabaseConnectionManager.execute_sql_statement(channel.guild.id, channel.guild.name, "UPDATE UNIQUE_MESSAGE SET MESSAGEID = ? WHERE MESSAGETYPE = ?", (message.id, message_type))
 
     @exception_handler
     async def create_embed_wo_reaction(self, message_type: str, channel: disnake.TextChannel):
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT * FROM UNIQUE_MESSAGE WHERE MESSAGETYPE = ?", (message_type,))
+        cursor = await DatabaseConnectionManager.execute_sql_statement(channel.guild.id, channel.guild.name, "SELECT * FROM UNIQUE_MESSAGE WHERE MESSAGETYPE = ?", (message_type,))
         result = (await cursor.fetchone())
 
         if not result:
@@ -182,7 +181,7 @@ class RoleAssignment(commands.Cog):
     async def _create_rules_embed(self, inter: disnake.ApplicationCommandInteraction, channel: disnake.TextChannel):
         await inter.response.defer()
 
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT DESCRIPTION FROM UNIQUE_MESSAGE WHERE MESSAGETYPE = ?", ("RULES1",))
+        cursor = await DatabaseConnectionManager.execute_sql_statement(channel.guild.id, channel.guild.name, "SELECT DESCRIPTION FROM UNIQUE_MESSAGE WHERE MESSAGETYPE = ?", ("RULES1",))
         result = (await cursor.fetchone())
         if result:
             rules1_description = result[0].replace('\\n', '\n')
@@ -193,7 +192,7 @@ class RoleAssignment(commands.Cog):
             color=0x00008B
         )
         start_embed.set_author(
-            name=self.bot.guilds[0].name, icon_url=self.bot.guilds[0].icon.url if self.bot.guilds[0].icon else self.bot.guilds[0].icon.url)
+            name=channel.guild.name, icon_url=channel.guild.icon.url if channel.guild.icon else channel.guild.icon.url)
         start_embed.add_field(
             name="**Invite Link**", value=f"https://discord.gg/datenight \n\nStand der Regeln und Infos: <t:{int(disnake.utils.utcnow().timestamp())}:R>*", inline=False)
         start_embed.set_footer(text="")
@@ -203,7 +202,7 @@ class RoleAssignment(commands.Cog):
         message_types = [f"RULES{i}" for i in range(2, 10)]
         options = []
         for message_type in message_types:
-            cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT TITLE FROM UNIQUE_MESSAGE WHERE MESSAGETYPE = ?", (message_type,))
+            cursor = await DatabaseConnectionManager.execute_sql_statement(channel.guild.id, channel.guild.name, "SELECT TITLE FROM UNIQUE_MESSAGE WHERE MESSAGETYPE = ?", (message_type,))
             result = (await cursor.fetchone())
             if result:
                 options.append(SelectOption(
@@ -211,20 +210,20 @@ class RoleAssignment(commands.Cog):
 
         # Create the dropdown menu for rules
         rules_select = Select(
-            placeholder="Wähle eine Regel...",
+            placeholder="📝Wähle eine Regel...",
             options=options,
             custom_id="rules_select"
         )
 
         # Create the dropdown options for server information
         info_options = [
-            SelectOption(label="Levelsystem", value="LEVEL"),
+            SelectOption(label="Levelsystem", emoji="💠" , value="LEVEL"),
             # Add more options as needed
         ]
 
-        # Create the dropdown menu for server information
+        # Create the dropdowvn menu for server information
         info_select = Select(
-            placeholder="Wähle eine Information...",
+            placeholder="📢Wähle eine Information...",
             options=info_options,
             custom_id="info_select"
         )
@@ -236,6 +235,9 @@ class RoleAssignment(commands.Cog):
         # Create the button for server team
         server_team_button = Button(
             label="Serverteam", style=disnake.ButtonStyle.primary, custom_id="server_team_button")
+        
+        server_stats_button = Button(
+            label="Server Statistiken", style=disnake.ButtonStyle.green, custom_id="server_stats_button")
 
         # Create the view and add items
         view = View()
@@ -244,6 +246,7 @@ class RoleAssignment(commands.Cog):
         view.add_item(info_select)
         # Add the server team button to the view
         view.add_item(server_team_button)
+        view.add_item(server_stats_button)
 
         await start_message.edit(view=view)
 
@@ -252,16 +255,16 @@ class RoleAssignment(commands.Cog):
     @exception_handler
     async def server_team_button_callback(self, interaction: disnake.Interaction):
         # Fetch team members from the database
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT USERID, ROLE FROM TEAM_MEMBERS WHERE TEAM_ROLE = 1")
+        cursor = await DatabaseConnectionManager.execute_sql_statement(interaction.guild.id, interaction.guild.name, "SELECT USERID, ROLE FROM TEAM_MEMBERS WHERE TEAM_ROLE = 1")
         team_members_data = await cursor.fetchall()
         team_members = []
         for user_id, role_name in team_members_data:
-            user_record = await self.globalfile.get_user_record(user_id=user_id)
+            user_record = await self.globalfile.get_user_record(guild=interaction.guild, user_id=user_id)
             if user_record:
                 discord_id = user_record['DISCORDID']
                 member = interaction.guild.get_member(int(discord_id))
                 if member:
-                    role_id = self.rolemanager.get_role_id(role_name)
+                    role_id = self.rolemanager.get_role_id(interaction.guild.id,role_name)
                     role = interaction.guild.get_role(
                         role_id) if role_id else None
                     role_mention = role.mention if role else f"<@&{role_id}>"
@@ -284,7 +287,7 @@ class RoleAssignment(commands.Cog):
             color=0x00008B
         )
         team_embed.set_author(
-            name=self.bot.guilds[0].name, icon_url=self.bot.guilds[0].icon.url if self.bot.guilds[0].icon else self.bot.guilds[0].icon.url)
+            name=interaction.guild.name, icon_url=interaction.guild.icon.url if interaction.guild.icon else interaction.guild.icon.url)
         team_embed.add_field(name="Teammitglieder", value="\n".join(
             sorted_team_members), inline=False)
         team_embed.add_field(
@@ -295,10 +298,107 @@ class RoleAssignment(commands.Cog):
         await interaction.response.send_message(embed=team_embed, ephemeral=True)
 
     @exception_handler
+    async def server_stats_button_callback(self, interaction: disnake.Interaction):
+        self.logger.info(f"Server Stats button pressed by {interaction.user.name}.")
+        guild_id = interaction.guild.id
+
+        # Get current time
+        current_time = await self.globalfile.get_current_time()
+
+        # Define time periods
+        start_of_day = current_time.replace(hour=0, minute=0, second=0, microsecond=0)
+        start_of_week = start_of_day - timedelta(days=start_of_day.weekday())
+        start_of_month = start_of_day.replace(day=1)
+        start_of_year = start_of_day.replace(month=1, day=1)
+
+        # Fetch message counts
+        async def fetch_message_count(start_date):
+            cursor = await DatabaseConnectionManager.execute_sql_statement(
+                guild_id, interaction.guild.name,
+                "SELECT COUNT(*) FROM MESSAGE WHERE INSERT_DATE >= ?", (start_date,)
+            )
+            result = await cursor.fetchone()
+            return result[0] if result else 0
+
+        messages_today = await fetch_message_count(start_of_day)
+        messages_this_week = await fetch_message_count(start_of_week)
+        messages_this_month = await fetch_message_count(start_of_month)
+        messages_this_year = await fetch_message_count(start_of_year)
+
+        # Fetch join and leave counts
+        async def fetch_user_count(start_date, condition):
+            cursor = await DatabaseConnectionManager.execute_sql_statement(
+                guild_id, interaction.guild.name,
+                f"SELECT COUNT(*) FROM USER WHERE {condition} >= ?", (start_date,)
+            )
+            result = await cursor.fetchone()
+            return result[0] if result else 0
+
+        joined_today = await fetch_user_count(start_of_day, "JOINED_DATE")
+        joined_this_week = await fetch_user_count(start_of_week, "JOINED_DATE")
+        joined_this_month = await fetch_user_count(start_of_month, "JOINED_DATE")
+        joined_this_year = await fetch_user_count(start_of_year, "JOINED_DATE")
+
+        left_today = await fetch_user_count(start_of_day, "LEAVED_DATE")
+        left_this_week = await fetch_user_count(start_of_week, "LEAVED_DATE")
+        left_this_month = await fetch_user_count(start_of_month, "LEAVED_DATE")
+        left_this_year = await fetch_user_count(start_of_year, "LEAVED_DATE")
+
+        # Fetch voice activity counts
+        async def fetch_voice_activity_count(start_date):
+            # Convert start_date to date only
+            start_date = start_date.date()
+            cursor = await DatabaseConnectionManager.execute_sql_statement(
+                guild_id, interaction.guild.name,
+                "SELECT SUM(VOICE) FROM VOICE_XP WHERE DATE >= ?", (start_date,)
+            )
+            result = await cursor.fetchone()
+            return result[0] if result else 0
+        
+        async def format_voice_activity(minutes):
+            if minutes >= 60:
+                hours = minutes // 60
+                remaining_minutes = minutes % 60
+                return f"{int(hours)} Stunden {remaining_minutes} Minuten" if remaining_minutes > 0 else f"{hours} Stunden"
+            return f"{minutes} Minuten"
+
+        voice_activity_today = await fetch_voice_activity_count(start_of_day)
+        voice_activity_this_week = await fetch_voice_activity_count(start_of_week)
+        voice_activity_this_month = await fetch_voice_activity_count(start_of_month)
+        voice_activity_this_year = await fetch_voice_activity_count(start_of_year)
+
+        if voice_activity_today is None:
+            voice_activity_today = 0
+        if voice_activity_this_week is None:
+            voice_activity_this_week = 0
+        if voice_activity_this_month is None:
+            voice_activity_this_month = 0
+        if voice_activity_this_year is None:
+            voice_activity_this_year = 0
+
+        # Create embed
+        embed = disnake.Embed(
+            title="📊 Server Statistiken",
+            color=0x00008B,
+            timestamp=current_time,
+            description="Hier sind die Statistiken für den Server."
+        )
+        embed.set_author(name=interaction.guild.name, icon_url=interaction.guild.icon.url if interaction.guild.icon else interaction.guild.icon.url)
+
+        embed.add_field(name="📅 **Heute**", value=f"Nachrichten: {messages_today}\nVoice-Aktivität: {await format_voice_activity(int(voice_activity_today)//2)}\nBeigetreten: {joined_today}\nVerlassen: {left_today}", inline=False)
+        embed.add_field(name="📅 **Diese Woche**", value=f"Nachrichten: {messages_this_week}\nVoice-Aktivität: {await format_voice_activity(int(voice_activity_this_week)//2)}\nBeigetreten: {joined_this_week}\nVerlassen: {left_this_week}", inline=False)
+        embed.add_field(name="📅 **Dieser Monat**", value=f"Nachrichten: {messages_this_month}\nVoice-Aktivität: {await format_voice_activity(int(voice_activity_this_month)//2)}\nBeigetreten: {joined_this_month}\nVerlassen: {left_this_month}", inline=False)
+        embed.add_field(name="📅 **Dieses Jahr**", value=f"Nachrichten: {messages_this_year}\nVoice-Aktivität: {await format_voice_activity(int(voice_activity_this_year)//2)}\nBeigetreten: {joined_this_year}\nVerlassen: {left_this_year}", inline=False)
+
+        embed.set_footer(text="Server Statistiken")
+
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @exception_handler
     async def _create_nsfwrules_embeds(self, inter: disnake.ApplicationCommandInteraction, channel: disnake.TextChannel):
         await inter.response.defer()
 
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT DESCRIPTION FROM UNIQUE_MESSAGE WHERE MESSAGETYPE = ?", ("NSFWRULES1",))
+        cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "SELECT DESCRIPTION FROM UNIQUE_MESSAGE WHERE MESSAGETYPE = ?", ("NSFWRULES1",))
         result = (await cursor.fetchone())
         if result:
             nsfwrules1_description = result[0].replace('\\n', '\n')
@@ -310,7 +410,7 @@ class RoleAssignment(commands.Cog):
             color=0x00008B
         )
         start_embed.set_author(
-            name=self.bot.guilds[0].name, icon_url=self.bot.guilds[0].icon.url if self.bot.guilds[0].icon else self.bot.guilds[0].icon.url)
+            name=inter.guild.name, icon_url=inter.guild.icon.url if inter.guild.icon else inter.guild.icon.url)
         start_embed.add_field(name="**Wichtige Informationen**",
                               value=f"Bitte lese alle Regeln sorgfältig durch.\n\nStand der Regeln und Infos: <t:{int(disnake.utils.utcnow().timestamp())}:R>*", inline=False)
         start_embed.set_footer(text="")
@@ -320,7 +420,7 @@ class RoleAssignment(commands.Cog):
         message_types = [f"NSFWRULES{i}" for i in range(2, 10)]
         options = []
         for message_type in message_types:
-            cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT TITLE FROM UNIQUE_MESSAGE WHERE MESSAGETYPE = ?", (message_type,))
+            cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "SELECT TITLE FROM UNIQUE_MESSAGE WHERE MESSAGETYPE = ?", (message_type,))
             result = (await cursor.fetchone())
             if result:
                 options.append(SelectOption(
@@ -429,7 +529,7 @@ class RoleAssignment(commands.Cog):
         elif inter.component.custom_id == "rules_select":
             await inter.response.defer(ephemeral=True)
             selected_rule = inter.values[0]
-            cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT * FROM UNIQUE_MESSAGE WHERE MESSAGETYPE = ?", (selected_rule,))
+            cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "SELECT * FROM UNIQUE_MESSAGE WHERE MESSAGETYPE = ?", (selected_rule,))
             result = (await cursor.fetchone())
 
             if result:
@@ -452,7 +552,7 @@ class RoleAssignment(commands.Cog):
 
             if selected_info == "LEVEL":
                 # Fetch and send the level embed
-                cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT * FROM UNIQUE_MESSAGE WHERE MESSAGETYPE = ?", ("LEVEL",))
+                cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "SELECT * FROM UNIQUE_MESSAGE WHERE MESSAGETYPE = ?", ("LEVEL",))
                 result = (await cursor.fetchone())
 
                 if result:
@@ -472,7 +572,7 @@ class RoleAssignment(commands.Cog):
         elif inter.component.custom_id == "nsfwrules_select":
             await inter.response.defer(ephemeral=True)
             selected_rule = inter.values[0]
-            cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT * FROM UNIQUE_MESSAGE WHERE MESSAGETYPE = ?", (selected_rule,))
+            cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "SELECT * FROM UNIQUE_MESSAGE WHERE MESSAGETYPE = ?", (selected_rule,))
             result = (await cursor.fetchone())
 
             if result:
@@ -503,6 +603,8 @@ class RoleAssignment(commands.Cog):
                 await self.seelsorge_button_callback(interaction)
             elif custom_id == "server_team_button":
                 await self.server_team_button_callback(interaction)
+            elif custom_id == "server_stats_button":
+                await self.server_stats_button_callback(interaction)                
 
     @exception_handler
     async def nsfwrules_button_callback(self, interaction: disnake.Interaction):
@@ -542,13 +644,13 @@ class RoleAssignment(commands.Cog):
         if payload.member.bot:
             return
 
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT * FROM UNIQUE_MESSAGE WHERE MESSAGEID = ?", (payload.message_id,))
+        guild: disnake.Guild = self.bot.get_guild(payload.guild_id)           
+        cursor = await DatabaseConnectionManager.execute_sql_statement(guild.id, guild.name, "SELECT * FROM UNIQUE_MESSAGE WHERE MESSAGEID = ?", (payload.message_id,))
         result = (await cursor.fetchone())
 
         if not result:
             return
-
-        guild: disnake.Guild = self.bot.get_guild(payload.guild_id)
+             
         if not guild:
             return
 
@@ -557,7 +659,7 @@ class RoleAssignment(commands.Cog):
             emoji = result[8 + (i - 1) * 2]
             if role_id and emoji:
                 emojifetched: disnake.Emoji = None
-                emojifetched = self.globalfile.get_emoji_by_name(emoji)
+                emojifetched = await self.globalfile.get_emoji_by_name(emoji, guild=guild)
                 if emojifetched.id is None:
                     emojifetched = await self.globalfile.get_manual_emoji(emoji)
                 if emojifetched and str(emojifetched) == str(payload.emoji):
@@ -573,14 +675,14 @@ class RoleAssignment(commands.Cog):
     async def on_raw_reaction_remove(self, payload: disnake.RawReactionActionEvent):
         if payload.user_id == None:
             return
-
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT * FROM UNIQUE_MESSAGE WHERE MESSAGEID = ?", (payload.message_id,))
+        
+        guild: disnake.Guild = self.bot.get_guild(payload.guild_id)
+        cursor = await DatabaseConnectionManager.execute_sql_statement(guild.id, guild.name, "SELECT * FROM UNIQUE_MESSAGE WHERE MESSAGEID = ?", (payload.message_id,))
         result = (await cursor.fetchone())
 
         if not result:
             return
 
-        guild: disnake.Guild = self.bot.get_guild(payload.guild_id)
         if not guild:
             return
 
@@ -589,7 +691,7 @@ class RoleAssignment(commands.Cog):
             emoji = result[8 + (i - 1) * 2]
             if role_id and emoji:
                 emojifetched: disnake.Emoji = None
-                emojifetched = self.globalfile.get_emoji_by_name(emoji)
+                emojifetched = await self.globalfile.get_emoji_by_name(emoji, guild=guild)
                 if emojifetched.id is None:
                     emojifetched = await self.globalfile.get_manual_emoji(emoji)
                 if emojifetched and str(emojifetched) == str(payload.emoji):
@@ -613,7 +715,7 @@ class RoleAssignment(commands.Cog):
             color=0x00008B
         )
         seelsorge_embed.set_author(
-            name=self.bot.guilds[0].name, icon_url=self.bot.guilds[0].icon.url if self.bot.guilds[0].icon else self.bot.guilds[0].icon.url)
+            name=inter.guild.name, icon_url=inter.guild.icon.url if inter.guild.icon else inter.guild.icon.url)
 
         seelsorge_description = (
             "**Seelsorge**\n"
@@ -659,13 +761,13 @@ class RoleAssignment(commands.Cog):
         await inter.response.send_message("Seelsorge und Beichte Embeds wurden erstellt.", ephemeral=True)
 
         # Datenbankeintrag erstellen
-        await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "INSERT INTO UNIQUE_MESSAGE (MESSAGETYPE, MESSAGEID, TITLE, DESCRIPTION, FOOTER) VALUES (?, ?, ?, ?, ?)",
+        await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "INSERT INTO UNIQUE_MESSAGE (MESSAGETYPE, MESSAGEID, TITLE, DESCRIPTION, FOOTER) VALUES (?, ?, ?, ?, ?)",
                                                               ("SEELSORGE", seelsorge_message.id, "Seelsorge Channel", seelsorge_description, ""))
 
     @exception_handler
     async def _beichte(self, inter: disnake.ApplicationCommandInteraction, message: str):
-        user_record = await self.globalfile.get_user_record(discordid=inter.user.id)
-        await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "INSERT INTO BEICHTEN (USERID, MESSAGE) VALUES (?, ?)", (user_record['ID'], message))
+        user_record = await self.globalfile.get_user_record(guild=inter.guild, discordid=inter.user.id)
+        await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "INSERT INTO BEICHTEN (USERID, MESSAGE) VALUES (?, ?)", (user_record['ID'], message))
 
         await inter.response.send_message("Deine Beichte wurde gespeichert und ggfs. für das Team zugänglich.", ephemeral=True)
         await self.beichte_channel.send(f"Neue Beichte: {message}")

@@ -34,11 +34,12 @@ class ClientAI(commands.Cog):
 
     @commands.Cog.listener()
     async def on_ready(self):
+        load_dotenv(dotenv_path="envs/settings.env", override=True)
         self.bot_channel = self.channelmanager.get_channel(self.bot.guilds[0].id,
                                                            int(os.getenv("BOT_CHANNEL_ID")))
         self.main_channel = self.channelmanager.get_channel(self.bot.guilds[0].id,
                                                             int(os.getenv("MAIN_CHANNEL_ID")))
-        self.logger.info(f"ClientAI ist bereit.")
+        self.logger.info(f"ClientAI Cog is ready.")
 
     def load_selected_py_files(self):
         file_contents = {}

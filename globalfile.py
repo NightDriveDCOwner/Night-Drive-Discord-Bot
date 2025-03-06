@@ -16,6 +16,7 @@ import sqlite3
 from exceptionhandler import exception_handler
 from rolemanager import RoleManager
 import aiosqlite
+from typing import Dict
 
 
 class Globalfile(commands.Cog):
@@ -53,8 +54,6 @@ class Globalfile(commands.Cog):
         self.self_reveal_channel = self.bot.get_channel(1061444217076994058)
         if not self.unban_task.is_running():
             self.unban_task.start()
-        if not self.check_warn_levels.is_running():
-            self.check_warn_levels.start()
         if not self.check_birthdays.is_running():
             self.check_birthdays.start()
         if not self.archive_old_threads.is_running():
@@ -65,9 +64,8 @@ class Globalfile(commands.Cog):
         self.logger.debug(
             f"Archive old threads is running: {self.archive_old_threads.is_running()}")
         self.logger.debug(
-            f"Check warn levels is running: {self.check_warn_levels.is_running()}")
-        self.logger.debug(
             f"Unban Task is running: {self.unban_task.is_running()}")
+        self.logger.info("Globalfile Cog is ready.")
 
     @exception_handler
     async def convert_duration_to_seconds(self, duration: str) -> int:
@@ -108,11 +106,21 @@ class Globalfile(commands.Cog):
         await attachment.save(f"{save_path}/{file_name}.png")
         return f"{save_path}/{file_name}.png"
 
-    @tasks.loop(minutes=1)
+    @tasks.loop(minutes=30)
     async def unban_task(self):
         """Überprüft regelmäßig die Banndauer und entbannt Benutzer, deren Banndauer abgelaufen ist."""
+        
+        tasks = []
+        for guild in self.bot.guilds:
+            tasks.append(asyncio.create_task(self.unban_guild(guild)))
+            tasks.append(asyncio.create_task(self.check_warn_levels(guild)))
+        
+        await asyncio.gather(*tasks)
 
-        cursor: aiosqlite.Cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, """
+    async def unban_guild(self, guild):
+        """Überprüft die Banndauer und entbannt Benutzer für eine bestimmte Gilde, deren Banndauer abgelaufen ist."""
+        
+        cursor: aiosqlite.Cursor = await DatabaseConnectionManager.execute_sql_statement(guild.id, guild.name, """
             SELECT BAN.USERID, BAN.BANNED_TO, USER.DISCORDID 
             FROM BAN 
             JOIN USER ON BAN.USERID = USER.ID 
@@ -138,11 +146,9 @@ class Globalfile(commands.Cog):
                 current_time = await self.get_current_time()
                 if current_time > ban_end_datetime:
                     # Banndauer ist abgelaufen, Benutzer entbannen
-                    # Ersetzen Sie dies durch die tatsächliche ID Ihres Servers
-                    guild = self.bot.get_guild(854698446996766730)
                     if guild is None:
                         self.logger.error(
-                            f"Guild mit ID 854698446996766730 konnte nicht gefunden werden.")
+                            f"Guild mit ID {guild.id} konnte nicht gefunden werden.")
                         # Debugging: Liste alle Gilden auf, die der Bot geladen hat
                         self.logger.debug(
                             f"Geladene Gilden: {[g.id for g in self.bot.guilds]}")
@@ -153,14 +159,15 @@ class Globalfile(commands.Cog):
                             if ban_entry.user.id == int(discordid):
                                 # Unban den Benutzer direkt mit der Benutzer-ID
                                 await guild.unban(disnake.Object(id=int(discordid)))
-                                await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "UPDATE BAN SET UNBANNED = 1 WHERE USERID = ?", (user_id,))
+                                await DatabaseConnectionManager.execute_sql_statement(guild.id, guild.name, "UPDATE BAN SET UNBANNED = 1 WHERE USERID = ?", (user_id,))
 
                                 self.logger.info(
                                     f"User {user_id} mit DiscordID {discordid} wurde automatisch entbannt.")
                         else:
                             self.logger.warning(
                                 f"User {user_id} mit DiscordID {discordid} ist nicht gebannt.")
-                            await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "UPDATE BAN SET UNBANNED = 1 WHERE USERID = ?", (user_id,))
+                            await DatabaseConnectionManager.execute_sql_statement(guild.id, guild.name, "UPDATE BAN SET UNBANNED = 1 WHERE USERID = ?", (user_id,))
+
                     except disnake.NotFound:
                         self.logger.warning(
                             f"User {user_id} mit DiscordID {discordid} konnte nicht gefunden werden.")
@@ -168,12 +175,68 @@ class Globalfile(commands.Cog):
                         self.logger.error(
                             f"Fehler beim Entbannen von User {user_id} mit DiscordID {discordid}: {e}")
 
+    async def check_warn_levels(self, guild):
+        """Überprüft das Warnlevel jedes Benutzers und reduziert es, wenn die letzte Warnung länger als 4 Monate zurückliegt."""
+
+        current_time = await self.get_current_time()
+        if current_time is None:
+            self.logger.error("Konnte die aktuelle Zeit nicht abrufen.")
+            return
+
+        four_months_ago = current_time - \
+            timedelta(days=4*30)  # Annahme: 1 Monat = 30 Tage
+
+        # Hole alle Benutzer, deren Warnlevel angepasst werden muss
+        cursor = await DatabaseConnectionManager.execute_sql_statement(guild.id, guild.name, """
+            SELECT ID, WARNLEVEL, WARNLEVEL_ADJUSTED
+            FROM USER
+            WHERE WARNLEVEL > 0
+        """)
+        users = await cursor.fetchall()
+        for user in users:
+            user_id, warn_level, warnlevel_adjusted = user
+
+            # Überprüfe, ob die letzte Warnung länger als 4 Monate zurückliegt
+            cursor: aiosqlite.Cursor = await DatabaseConnectionManager.execute_sql_statement(guild.id, guild.name, """
+                SELECT MAX(INSERT_DATE)
+                FROM WARN
+                WHERE USERID = ?
+                AND REMOVED <> 1
+            """, (user_id,))
+            last_warn_date = (await cursor.fetchone())
+
+        if last_warn_date:
+            # Extract the string from the tuple
+            last_warn_date_str = last_warn_date[0]
+            if last_warn_date_str:  # Check if the string is not None
+                last_warn_date = datetime.strptime(
+                    last_warn_date_str, '%Y-%m-%d %H:%M:%S')
+                last_warn_date = last_warn_date.replace(
+                    tzinfo=timezone.utc)  # Offset-bewusst machen
+                if last_warn_date < four_months_ago:
+                    # Überprüfe, ob die letzte Warnlevel-Anpassung auch länger als 4 Monate zurückliegt
+                    if not warnlevel_adjusted or datetime.strptime(warnlevel_adjusted, '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc) < four_months_ago:
+                        # Reduziere das Warnlevel um 1
+                        new_warn_level = max(0, warn_level - 1)
+                        current_time_str = current_time.strftime(
+                            '%Y-%m-%d %H:%M:%S')
+                        cursor = await DatabaseConnectionManager.execute_sql_statement(guild.id, guild.name, """
+                            UPDATE USER
+                            SET WARNLEVEL = ?, WARNLEVEL_ADJUSTED = ?
+                            WHERE ID = ?
+                        """, (new_warn_level, current_time_str, user_id))
+
+                        self.logger.info(
+                            f"Warnlevel für Benutzer {user_id} auf {new_warn_level} reduziert.")
+
+    tasks.loop(hours=24)
+
     @exception_handler
-    async def get_user_record(self, user_id: int = None, username: str = "", discordid="") -> dict:
+    async def get_user_record(self, guild : disnake.Guild, user_id: int = None, username: str = "", discordid="") -> dict:
         """Holt die ID, den Benutzernamen und die Discord-ID des Datensatzes aus der Tabelle User basierend auf Benutzername und User ID."""
 
         query = "SELECT ID, USERNAME, DISCORDID FROM USER WHERE USERNAME = ? OR DISCORDID = ? OR ID = ?"
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, query, (username, str(discordid), user_id))
+        cursor = await DatabaseConnectionManager.execute_sql_statement(guild.id, guild.name, query, (username, str(discordid), user_id))
         results = await cursor.fetchall()
         if len(results) > 2:
             raise ValueError("Mehr als zwei Datensätze gefunden. Abbruch.")
@@ -198,9 +261,8 @@ class Globalfile(commands.Cog):
         self.TimerMustReseted = True
 
     @exception_handler
-    async def admin_did_something(self, action: disnake.AuditLogAction, handleduser: Union[disnake.User, disnake.Member]):
-        DeletedbyAdmin = False
-        guild = self.bot.get_guild(854698446996766730)
+    async def admin_did_something(self, action: disnake.AuditLogAction, handleduser: Union[disnake.User, disnake.Member], guild: disnake.Guild) -> namedtuple:
+        DeletedbyAdmin = False        
         async for entry in guild.audit_logs(limit=5, action=action, after=datetime.now() - timedelta(minutes=5)):
             if action in [disnake.AuditLogAction.message_delete, disnake.AuditLogAction.member_disconnect]:
                 if entry.extra.count is not None:
@@ -249,12 +311,6 @@ class Globalfile(commands.Cog):
         return self.UserRecord(user, username, userid)
 
     @exception_handler
-    async def log_audit_entry(self, logtype: str, userid: int, details: str):
-        """Loggt einen Audit-Eintrag in die Datenbank."""
-
-        await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "INSERT INTO AUDITLOG (LOGTYPE, USERID, DETAILS) VALUES (?, ?, ?)", (logtype, userid, details))
-
-    @exception_handler
     async def delete_message_by_id(self, channel_id: int, message_id: int):
         """Löscht eine Nachricht basierend auf ihrer ID in einem bestimmten Kanal."""
         try:
@@ -300,34 +356,6 @@ class Globalfile(commands.Cog):
             f"Nachricht mit der ID {message_id} wurde nicht gefunden.")
 
     @exception_handler
-    async def get_user_record_id(self, username: str = None, user_id: int = None) -> int:
-        """Holt die ID des Datensatzes aus der Tabelle User basierend auf Benutzername und/oder User ID."""
-
-        if username and user_id:
-            query = "SELECT ID FROM USER WHERE USERNAME = ? AND USERID = ?"
-            cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, query, (username, user_id))
-        elif username:
-            query = "SELECT ID FROM User WHERE USERNAME = ?"
-            cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, query, (username,))
-        elif user_id:
-            query = "SELECT ID FROM User WHERE USERID = ?"
-            cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, query, (user_id,))
-        else:
-            return None
-
-        result = (await cursor.fetchone())
-        return result[0] if result else None
-
-    @exception_handler
-    async def get_message_record_id(self, message_id: int) -> int:
-        """Holt die ID des Datensatzes aus der Tabelle Message basierend auf der Message ID."""
-
-        query = "SELECT ID FROM Message WHERE MESSAGEID = ?"
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, query, (message_id,))
-        result = (await cursor.fetchone())
-        return result[0] if result else None
-
-    @exception_handler
     async def get_member_from_user(self, user: disnake.User, guild_id: int) -> Union[disnake.Member, None]:
         """Konvertiert einen disnake.User in einen disnake.Member, sofern der Benutzer Mitglied der Gilde ist."""
         guild = self.bot.get_guild(guild_id)
@@ -335,98 +363,7 @@ class Globalfile(commands.Cog):
             member = guild.get_member(user.id)
             return member
         return None
-
-    @tasks.loop(hours=1)
-    async def check_warn_levels(self):
-        """Überprüft das Warnlevel jedes Benutzers und reduziert es, wenn die letzte Warnung länger als 4 Monate zurückliegt."""
-
-        current_time = await self.get_current_time()
-        if current_time is None:
-            self.logger.error("Konnte die aktuelle Zeit nicht abrufen.")
-            return
-
-        four_months_ago = current_time - \
-            timedelta(days=4*30)  # Annahme: 1 Monat = 30 Tage
-
-        # Hole alle Benutzer, deren Warnlevel angepasst werden muss
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, """
-            SELECT ID, WARNLEVEL, WARNLEVEL_ADJUSTED
-            FROM USER
-            WHERE WARNLEVEL > 0
-        """)
-        users = await cursor.fetchall()
-        for user in users:
-            user_id, warn_level, warnlevel_adjusted = user
-
-            # Überprüfe, ob die letzte Warnung länger als 4 Monate zurückliegt
-            cursor: aiosqlite.Cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, """
-                SELECT MAX(INSERT_DATE)
-                FROM WARN
-                WHERE USERID = ?
-                AND REMOVED <> 1
-            """, (user_id,))
-            last_warn_date = (await cursor.fetchone())
-
-        if last_warn_date:
-            # Extract the string from the tuple
-            last_warn_date_str = last_warn_date[0]
-            if last_warn_date_str:  # Check if the string is not None
-                last_warn_date = datetime.strptime(
-                    last_warn_date_str, '%Y-%m-%d %H:%M:%S')
-                last_warn_date = last_warn_date.replace(
-                    tzinfo=timezone.utc)  # Offset-bewusst machen
-                if last_warn_date < four_months_ago:
-                    # Überprüfe, ob die letzte Warnlevel-Anpassung auch länger als 4 Monate zurückliegt
-                    if not warnlevel_adjusted or datetime.strptime(warnlevel_adjusted, '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc) < four_months_ago:
-                        # Reduziere das Warnlevel um 1
-                        new_warn_level = max(0, warn_level - 1)
-                        current_time_str = current_time.strftime(
-                            '%Y-%m-%d %H:%M:%S')
-                        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, """
-                            UPDATE USER
-                            SET WARNLEVEL = ?, WARNLEVEL_ADJUSTED = ?
-                            WHERE ID = ?
-                        """, (new_warn_level, current_time_str, user_id))
-
-                        self.logger.info(
-                            f"Warnlevel für Benutzer {user_id} auf {new_warn_level} reduziert.")
-
-    tasks.loop(hours=24)
-
-    async def sync_users(self):
-        """Synchronisiert die Benutzerdatenbank mit den Mitgliedern des Servers."""
-        guild = self.bot.get_guild(854698446996766730)
-        members = guild.members
-
-        for member in members:
-            # Überprüfen, ob der Benutzer bereits in der Tabelle Users existiert
-            cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT ID, USERNAME FROM USER WHERE DISCORDID = ?", (str(member.id),))
-            result = (await cursor.fetchone())
-
-            if not result:
-                # Benutzer existiert nicht, füge ihn in die Tabelle Users ein
-                await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "INSERT INTO USER (DISCORDID, USERNAME) VALUES (?, ?)", (str(member.id), member.name))
-
-            else:
-                # Benutzer existiert, überprüfe den Benutzernamen
-                user_id, db_username = result
-                if db_username != member.name:
-                    # Benutzername ist nicht korrekt, aktualisiere ihn
-                    await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "UPDATE USER SET USERNAME = ? WHERE ID = ?", (member.name, user_id))
-
-    @tasks.loop(minutes=1)
-    async def track_voice_minutes(self):
-        """Überprüft jede Minute, wer sich in den Voice-Channels befindet, und erhöht den Wert TOTALVOICEMIN in der Tabelle USER."""
-        guild = self.bot.get_guild(
-            854698446996766730)  # Ersetzen Sie dies durch die tatsächliche ID Ihres Servers
-        if guild:
-
-            for channel in guild.voice_channels:
-                for member in channel.members:
-                    userrecord = self.get_user_record(discordid=member.id)
-                    if userrecord:
-                        await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "UPDATE USER SET TOTALVOICEMIN = TOTALVOICEMIN + 1 WHERE ID = ?", (userrecord['ID'],))
-
+ 
     @exception_handler
     async def get_current_time(self):
         """Gibt die aktuelle Zeit in der deutschen Zeitzone zurück."""
@@ -441,80 +378,119 @@ class Globalfile(commands.Cog):
         """Überprüft täglich um 12 Uhr, ob ein Benutzer Geburtstag hat."""
 
         # Hole das Datum
-        today = await self.get_current_time()
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT DISCORDID, USERNAME FROM USER WHERE strftime('%m-%d', BIRTHDAY) = ?", (today.strftime('%m-%d'),))
-        birthday_users = await cursor.fetchall()
-        if birthday_users:
-            # Ersetzen Sie dies durch die tatsächliche ID Ihres Servers
-            guild = self.bot.get_guild(854698446996766730)
-            if guild:
-                for user in birthday_users:
-                    discord_id, username = user
-                    member = guild.get_member(int(discord_id))
-                    if member:
-                        # Server Embed
-                        server_embed = disnake.Embed(
-                            title="🎉 Herzlichen Glückwunsch zum Geburtstag!",
-                            description=f"{member.mention} hat heute Geburtstag! 🎂",
-                            color=disnake.Color.green()
-                        )
-                        server_embed.set_thumbnail(
-                            url=member.avatar.url if member.avatar else member.default_avatar.url)
-                        server_embed.set_author(
-                            name=guild.name, icon_url=guild.icon.url if guild.icon else None)
-                        server_embed.add_field(
-                            name="🎁 Geschenk", value="Du erhältst heute doppelte EP!", inline=False)
-                        server_embed.set_footer(
-                            text="Wir wünschen dir einen tollen Tag!")
+        for guild in self.bot.guilds:
+            today = await self.get_current_time()
+            cursor = await DatabaseConnectionManager.execute_sql_statement(guild.id, guild.name, "SELECT DISCORDID, USERNAME FROM USER WHERE strftime('%m-%d', BIRTHDAY) = ?", (today.strftime('%m-%d'),))
+            birthday_users = await cursor.fetchall()
+            if birthday_users:
+                # Ersetzen Sie dies durch die tatsächliche ID Ihres Servers
+                if guild:
+                    for user in birthday_users:
+                        discord_id, username = user
+                        member = guild.get_member(int(discord_id))
+                        if member:
+                            # Server Embed
+                            server_embed = disnake.Embed(
+                                title="🎉 Herzlichen Glückwunsch zum Geburtstag!",
+                                description=f"{member.mention} hat heute Geburtstag! 🎂",
+                                color=disnake.Color.green()
+                            )
+                            server_embed.set_thumbnail(
+                                url=member.avatar.url if member.avatar else member.default_avatar.url)
+                            server_embed.set_author(
+                                name=guild.name, icon_url=guild.icon.url if guild.icon else None)
+                            server_embed.add_field(
+                                name="🎁 Geschenk", value="Du erhältst heute doppelte EP!", inline=False)
+                            server_embed.set_footer(
+                                text="Wir wünschen dir einen tollen Tag!")
 
-                        # Sende die Nachricht im Server
-                        # Ersetzen Sie dies durch den gewünschten Kanal
-                        birthday_channel = guild.get_channel(
-                            854698447247769630)
-                        if birthday_channel:
-                            await birthday_channel.send(embed=server_embed)
+                            # Sende die Nachricht im Server
+                            # Ersetzen Sie dies durch den gewünschten Kanal
+                            birthday_channel = guild.get_channel(
+                                854698447247769630)
+                            if birthday_channel:
+                                await birthday_channel.send(embed=server_embed)
 
-                        # DM Embed
-                        dm_embed = disnake.Embed(
-                            title="🎉 Alles Gute zum Geburtstag!",
-                            description=f"Lieber {username},",
-                            color=disnake.Color.blue()
-                        )
-                        dm_embed.set_thumbnail(
-                            url=member.avatar.url if member.avatar else member.default_avatar.url)
-                        dm_embed.set_author(
-                            name=guild.name, icon_url=guild.icon.url if guild.icon else None)
-                        dm_embed.add_field(
-                            name="🎁 Geschenk", value="Du erhältst heute doppelte EP!", inline=False)
-                        dm_embed.add_field(
-                            name="🎉 Dankeschön", value="Vielen Dank, dass du Teil unserer Community bist!", inline=False)
-                        dm_embed.add_field(
-                            name="📞 Unterstützung", value="Wenn du irgendwelche Probleme hast, kannst du dich jederzeit an uns wenden.", inline=False)
-                        dm_embed.set_footer(
-                            text="Wir wünschen dir einen tollen Tag!")
+                            # DM Embed
+                            dm_embed = disnake.Embed(
+                                title="🎉 Alles Gute zum Geburtstag!",
+                                description=f"Lieber {username},",
+                                color=disnake.Color.blue()
+                            )
+                            dm_embed.set_thumbnail(
+                                url=member.avatar.url if member.avatar else member.default_avatar.url)
+                            dm_embed.set_author(
+                                name=guild.name, icon_url=guild.icon.url if guild.icon else None)
+                            dm_embed.add_field(
+                                name="🎁 Geschenk", value="Du erhältst heute doppelte EP!", inline=False)
+                            dm_embed.add_field(
+                                name="🎉 Dankeschön", value="Vielen Dank, dass du Teil unserer Community bist!", inline=False)
+                            dm_embed.add_field(
+                                name="📞 Unterstützung", value="Wenn du irgendwelche Probleme hast, kannst du dich jederzeit an uns wenden.", inline=False)
+                            dm_embed.set_footer(
+                                text="Wir wünschen dir einen tollen Tag!")
 
-                        # Sende die private Nachricht
-                        try:
-                            await member.send(embed=dm_embed)
-                        except disnake.Forbidden:
+                            # Sende die private Nachricht
+                            try:
+                                await member.send(embed=dm_embed)
+                            except disnake.Forbidden:
+                                self.logger.warning(
+                                    f"Konnte keine Nachricht an {username} ({discord_id}) senden. Möglicherweise hat der Benutzer DMs deaktiviert.")
+                        else:
                             self.logger.warning(
-                                f"Konnte keine Nachricht an {username} ({discord_id}) senden. Möglicherweise hat der Benutzer DMs deaktiviert.")
-                    else:
-                        self.logger.warning(
-                            f"Benutzer {username} ({discord_id}) ist nicht auf dem Server.")
+                                f"Benutzer {username} ({discord_id}) ist nicht auf dem Server.")
+                        
+    @exception_handler
+    async def are_user_friends(self, user_id: int, friend_id: int, guild: disnake.Guild) -> bool:
+        """Überprüft, ob zwei Benutzer Freunde sind."""
+        cursor = await DatabaseConnectionManager.execute_sql_statement(guild.id, guild.name, "SELECT COUNT(*) FROM FRIEND WHERE (USERID = ? AND FRIENDID = ?) OR (USERID = ? AND FRIENDID = ?)", (user_id, friend_id, friend_id, user_id))
+        result = (await cursor.fetchone())
+        return result[0] > 0
+    
+    @exception_handler
+    async def is_user_blocked(self, user_id: int, blocked_id: int, guild: disnake.Guild) -> bool:
+        """Überprüft, ob ein Benutzer blockiert ist."""
+        cursor = await DatabaseConnectionManager.execute_sql_statement(guild.id, guild.name, "SELECT COUNT(*) FROM BLOCK WHERE USERID = ? AND BLOCKEDID = ?", (user_id, blocked_id))
+        result = (await cursor.fetchone())
+        return result[0] > 0
+    
+    async def get_user_privacy_settings(self, user_id: int, guild: disnake.Guild) -> Dict[str, str]:
+        user_record = await self.get_user_record(discordid=user_id)
+        cursor = await DatabaseConnectionManager.execute_sql_statement(guild.id, guild.name, 
+                                                                       "SELECT SETTING, VALUE FROM USER_SETTINGS WHERE USERID = ? AND SETTING IN ('xp', 'birthday', 'notes', 'warnings', 'friendlist', 'introduction')", (user_record['ID'],))
+        settings = {row[0]: row[1] for row in await cursor.fetchall()}
+        
+        # Set default values if not present
+        default_settings = {
+            'xp': 'everyone',
+            'birthday': 'nobody',
+            'notes': 'nobody',
+            'warnings': 'nobody',
+            'friendlist': 'friends',
+            'introduction': 'friends'
+        }
+        
+        # Insert missing default settings into the databas                
+        for key, value in default_settings.items():
+            if key not in settings:
+                settings[key] = value
+                await DatabaseConnectionManager.execute_sql_statement(guild.id, guild.name, """
+                    INSERT INTO USER_SETTINGS (USERID, SETTING, VALUE)
+                    VALUES (?, ?, ?)
+                """, (user_record['ID'], key, value))
+        
+        return settings    
 
     @exception_handler
-    async def delete_user_data(self, user_id):
+    async def delete_user_data(self, user_id, guild: disnake.Guild):
         # Lösche alle Antworten des Benutzers
-        await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "DELETE FROM ANSWER WHERE USERID = ?", (user_id,))
+        await DatabaseConnectionManager.execute_sql_statement(guild.id, guild.name, "DELETE FROM ANSWER WHERE USERID = ?", (user_id,))
 
         # Lösche alle gesetzten Einstellungen des Benutzers
-        await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "DELETE FROM USER_SETTINGS WHERE USERID = ?", (user_id,))
+        await DatabaseConnectionManager.execute_sql_statement(guild.id, guild.name, "DELETE FROM USER_SETTINGS WHERE USERID = ?", (user_id,))
 
     @exception_handler
-    async def get_emoji_by_name(self, emoji_name: str) -> Union[disnake.Emoji, disnake.PartialEmoji, None]:
-        # Check custom emojis in the guild
-        guild: disnake.Guild = self.bot.get_guild(854698446996766730)
+    async def get_emoji_by_name(self, emoji_name: str, guild: disnake.Guild) -> Union[disnake.Emoji, disnake.PartialEmoji, None]:                
         for emoji in guild.emojis:
             if emoji.name == emoji_name:
                 return emoji
@@ -543,6 +519,7 @@ class Globalfile(commands.Cog):
     @exception_handler
     async def get_manual_emoji(self, emoji_name: str) -> disnake.Emoji:
         emoji_dict = {
+            "biting_lip": "👄",
             "new": "🆕",
             "incoming_envelope": "📨",
             "keycap_ten": "🔟",

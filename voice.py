@@ -25,8 +25,7 @@ class Voice(commands.Cog):
                 '[%(asctime)s - %(name)s - %(levelname)s]: %(message)s')
             handler = logging.StreamHandler()
             handler.setFormatter(formatter)
-            self.logger.addHandler(handler)
-
+            self.logger.addHandler(handler) 
         self.template_channel_id = 1338277012326055967
         self.allowed_category_id = 1069043859998396529
 
@@ -36,6 +35,7 @@ class Voice(commands.Cog):
             1221018527289577582)
         self.voicelog_channel: disnake.TextChannel = self.bot.get_channel(
             1219347644640530553)
+        self.logger.info("Voice Cog is ready.")
 
     @commands.Cog.listener()
     async def on_voice_state_update(self, member: disnake.Member, before: disnake.VoiceState, after: disnake.VoiceState):
@@ -58,7 +58,7 @@ class Voice(commands.Cog):
         if before.channel and before.channel.category_id == self.allowed_category_id and len(before.channel.members) == 0 and before.channel.id != 1338277012326055967:
             self.logger.info(
                 f"Der Voice-Channel {before.channel.name} ist leer und wird gelöscht.")
-            cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "DELETE FROM CUSTOMCHANNEL WHERE CHANNELID = ?", (before.channel.id,))
+            cursor = await DatabaseConnectionManager.execute_sql_statement(member.guild.id, member.guild.name, "DELETE FROM CUSTOMCHANNEL WHERE CHANNELID = ?", (before.channel.id,))
 
             await before.channel.delete()
 
@@ -69,7 +69,7 @@ class Voice(commands.Cog):
                 f"User entered voice channel <#{after.channel.id}>!", 0x4169E1)
 
         elif before.channel is not None and after.channel is None:
-            User = await self.globalfile.admin_did_something(disnake.AuditLogAction.member_disconnect, member)
+            User = await self.globalfile.admin_did_something(disnake.AuditLogAction.member_disconnect, member, member.guild)
             if User.username == member.name:
                 self.logger.info(
                     f"{member.name} hat den Voice-Channel {before.channel.name} verlassen.")
@@ -84,7 +84,7 @@ class Voice(commands.Cog):
 
         elif before.deaf != after.deaf or before.mute != after.mute or before.self_mute != after.self_mute:
             if after.deaf:
-                User = await self.globalfile.admin_did_something(disnake.AuditLogAction.member_update, member)
+                User = await self.globalfile.admin_did_something(disnake.AuditLogAction.member_update, member, member.guild)
                 if User.username == member.name:
                     self.logger.info(f"{member.name} was generally muted.")
                     embed = create_embed(
@@ -96,7 +96,7 @@ class Voice(commands.Cog):
                     embed = create_embed(
                         f"{member.name} was generally muted from {User.username}({User.userid}).", 0xFF0000)
             elif after.mute:
-                User = await self.globalfile.admin_did_something(disnake.AuditLogAction.member_update, member)
+                User = await self.globalfile.admin_did_something(disnake.AuditLogAction.member_update, member, member.guild)
                 self.logger.info(
                     f"{member.name}'s Mikrofon wurde von {User.username}({User.userid}) stummgeschaltet.")
                 channel = self.auditlog_channel
@@ -113,7 +113,7 @@ class Voice(commands.Cog):
                     embed = create_embed(
                         f"User no longer muted <#{after.channel.id}>!", 0x006400)
                 else:
-                    User = await self.globalfile.admin_did_something(disnake.AuditLogAction.member_update, member.guild, member)
+                    User = await self.globalfile.admin_did_something(disnake.AuditLogAction.member_update, member.guild, member, member.guild)
                     self.logger.info(
                         f"{member.name} wurde von {User.username}({User.userid}) entmuted.")
                     channel = self.auditlog_channel
@@ -135,9 +135,8 @@ class Voice(commands.Cog):
             new_voice_channel = await category.create_voice_channel(
                 name=f"{member.name}'s Channel",
                 overwrites={
-                    member.guild.default_role: disnake.PermissionOverwrite(connect=True, speak=True, view_channel=False),
-                    member: disnake.PermissionOverwrite(
-                        connect=True, speak=True, view_channel=True)
+                    member.guild.default_role: disnake.PermissionOverwrite(connect=True, speak=True, view_channel=True),
+                    member: disnake.PermissionOverwrite(connect=True, speak=True, view_channel=True)
                 }
             )
 
@@ -183,15 +182,15 @@ class Voice(commands.Cog):
 
             await new_voice_channel.send(embed=embed)
 
-            user_record = await self.globalfile.get_user_record(discordid=member.id)
-            await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "INSERT INTO CUSTOMCHANNEL (CHANNELID, CHANNELOWNERID, CREATEDAT) VALUES (?,?,?)", (new_voice_channel.id, user_record["ID"], current_datetime))
+            user_record = await self.globalfile.get_user_record(guild=member.guild, discordid=member.id)
+            await DatabaseConnectionManager.execute_sql_statement(member.guild.id, member.guild.name, "INSERT INTO CUSTOMCHANNEL (CHANNELID, CHANNELOWNERID, CREATEDAT) VALUES (?,?,?)", (new_voice_channel.id, user_record["ID"], current_datetime))
 
             # Blockiere bereits blockierte Benutzer vom neuen Voice-Channel
-            user_record = await self.globalfile.get_user_record(discordid=member.id)
-            cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT VALUE FROM BLOCKED_USERS WHERE USERID = ?", (user_record['ID'],))
+            user_record = await self.globalfile.get_user_record(guild=member.guild, discordid=member.id)
+            cursor = await DatabaseConnectionManager.execute_sql_statement(member.guild.id, member.guild.name, "SELECT VALUE FROM BLOCKED_USERS WHERE USERID = ?", (user_record['ID'],))
             blocked_users = await cursor.fetchall()
             for user_id in blocked_users:
-                user_record = await self.globalfile.get_user_record(user_id[0])
+                user_record = await self.globalfile.get_user_record(guild=member.guild, user_id=user_id[0])
                 guild: disnake.Guild = member.guild
                 user = guild.get_member(int(user_record['DISCORDID']))
                 if user:
@@ -240,9 +239,9 @@ class Voice(commands.Cog):
 
     @exception_handler
     async def is_channel_owner(self, user: disnake.Member, channel: disnake.VoiceChannel) -> bool:
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT CHANNELOWNERID FROM CUSTOMCHANNEL WHERE CHANNELID = ?", (channel.id,))
+        cursor = await DatabaseConnectionManager.execute_sql_statement(channel.guild.id, channel.guild.name, "SELECT CHANNELOWNERID FROM CUSTOMCHANNEL WHERE CHANNELID = ?", (channel.id,))
         owner_id = (await cursor.fetchone())
-        if owner_id and owner_id[0] == (await self.globalfile.get_user_record(discordid=user.id))['ID']:
+        if owner_id and owner_id[0] == (await self.globalfile.get_user_record(guild=channel.guild, discordid=user.id))['ID']:
             return True
         return False
 
@@ -301,9 +300,9 @@ class Voice(commands.Cog):
             if inter.author.voice.channel.category_id == self.allowed_category_id:
                 if await self.is_channel_owner(inter.author, inter.author.voice.channel):
                     await inter.author.voice.channel.set_permissions(member, connect=False)
-                    userid = (await self.globalfile.get_user_record(discordid=inter.user.id))['ID']
-                    blocked_userid = (await self.globalfile.get_user_record(discordid=member.id))['ID']
-                    await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "INSERT OR IGNORE INTO BLOCKED_USERS (USERID,VALUE) VALUES (?,?)", (int(userid), int(blocked_userid)))
+                    userid = (await self.globalfile.get_user_record(guild=inter.guild, discordid=inter.user.id))['ID']
+                    blocked_userid = (await self.globalfile.get_user_record(guild=inter.guild, discordid=member.id))['ID']
+                    await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "INSERT OR IGNORE INTO BLOCKED_USERS (USERID,VALUE) VALUES (?,?)", (int(userid), int(blocked_userid)))
 
                     if member.voice and member.voice.channel == inter.author.voice.channel:
                         await member.move_to(None)
@@ -322,9 +321,9 @@ class Voice(commands.Cog):
             if inter.author.voice.channel.category_id == self.allowed_category_id:
                 if await self.is_channel_owner(inter.author, inter.author.voice.channel):
                     await inter.author.voice.channel.set_permissions(member, connect=True)
-                    userid = (await self.globalfile.get_user_record(discordid=inter.user.id))['ID']
-                    blocked_userid = (await self.globalfile.get_user_record(discordid=member.id))['ID']
-                    cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "DELETE FROM BLOCKED_USERS WHERE USERID = ? AND VALUE = ?", (int(userid), int(blocked_userid)))
+                    userid = (await self.globalfile.get_user_record(guild=inter.guild, discordid=inter.user.id))['ID']
+                    blocked_userid = (await self.globalfile.get_user_record(guild=inter.guild, discordid=member.id))['ID']
+                    cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "DELETE FROM BLOCKED_USERS WHERE USERID = ? AND VALUE = ?", (int(userid), int(blocked_userid)))
 
                     await inter.response.send_message(f"{member.name} wurde vom Channel entblockiert.", ephemeral=True)
                 else:
@@ -430,15 +429,15 @@ class Voice(commands.Cog):
         """Übernehme den Voice-Channel."""
         if inter.author.voice and inter.author.voice.channel:
             if inter.author.voice.channel.category_id == self.allowed_category_id:
-                cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT CHANNELOWNERID FROM CUSTOMCHANNEL WHERE CHANNELID = ?", (inter.author.voice.channel.id,))
+                cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "SELECT CHANNELOWNERID FROM CUSTOMCHANNEL WHERE CHANNELID = ?", (inter.author.voice.channel.id,))
                 owner_id = (await cursor.fetchone())
                 if owner_id:
                     channel_owner = inter.guild.get_member(int(owner_id[0]))
                     if channel_owner and channel_owner.voice and channel_owner.voice.channel == inter.author.voice.channel:
                         await inter.response.send_message("Der aktuelle Channel-Owner ist noch im Channel.", ephemeral=True)
                     else:
-                        user_record = await self.globalfile.get_user_record(discordid=inter.user.id)
-                        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "UPDATE CUSTOMCHANNEL SET CHANNELOWNERID = ? WHERE CHANNELID = ?", (user_record['ID'], inter.author.voice.channel.id))
+                        user_record = await self.globalfile.get_user_record(guild=inter.guild, discordid=inter.user.id)
+                        cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "UPDATE CUSTOMCHANNEL SET CHANNELOWNERID = ? WHERE CHANNELID = ?", (user_record['ID'], inter.author.voice.channel.id))
 
                         await inter.response.send_message("Du hast den Channel übernommen.", ephemeral=True)
                 else:
@@ -453,13 +452,13 @@ class Voice(commands.Cog):
         """Übertrage den Voice-Channel an ein Mitglied."""
         if inter.author.voice and inter.author.voice.channel:
             if inter.author.voice.channel.category_id == self.allowed_category_id:
-                cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT CHANNELOWNERID FROM CUSTOMCHANNEL WHERE CHANNELID = ?", (inter.author.voice.channel.id,))
+                cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "SELECT CHANNELOWNERID FROM CUSTOMCHANNEL WHERE CHANNELID = ?", (inter.author.voice.channel.id,))
                 owner_id = (await cursor.fetchone())
-                if owner_id and owner_id[0] == (await self.globalfile.get_user_record(discordid=inter.user.id))['ID']:
-                    user_record = await self.globalfile.get_user_record(discordid=member.id)
+                if owner_id and owner_id[0] == (await self.globalfile.get_user_record(guild=inter.guild, discordid=inter.user.id))['ID']:
+                    user_record = await self.globalfile.get_user_record(guild=inter.guild, discordid=member.id)
                     await inter.author.voice.channel.set_permissions(inter.author, view_channel=False)
                     await inter.author.voice.channel.set_permissions(member, view_channel=True)
-                    cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "UPDATE CUSTOMCHANNEL SET CHANNELOWNERID = ? WHERE CHANNELID = ?", (user_record['ID'], inter.author.voice.channel.id))
+                    cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "UPDATE CUSTOMCHANNEL SET CHANNELOWNERID = ? WHERE CHANNELID = ?", (user_record['ID'], inter.author.voice.channel.id))
 
                     await inter.response.send_message(f"Du hast den Channel an {member.name} übertragen.", ephemeral=True)
                 else:
@@ -474,8 +473,8 @@ class Voice(commands.Cog):
         """Speichere den Voice-Channel/die Session."""
         if inter.author.voice and inter.author.voice.channel:
             if inter.author.voice.channel.category_id == self.allowed_category_id:
-                user_record = await self.globalfile.get_user_record(discordid=inter.user.id)
-                await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "INSERT INTO SAVESESSIONS (USERID, CHANNELNAME, CHANNELLIMIT) VALUES (?, ?, ?)",
+                user_record = await self.globalfile.get_user_record(guild=inter.guild, discordid=inter.user.id)
+                await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "INSERT INTO SAVESESSIONS (USERID, CHANNELNAME, CHANNELLIMIT) VALUES (?, ?, ?)",
                                                                       (user_record['ID'], inter.author.voice.channel.name, inter.author.voice.channel.user_limit))
 
                 await inter.response.send_message("Channel/Session wurde gespeichert.", ephemeral=True)
@@ -488,10 +487,10 @@ class Voice(commands.Cog):
     async def _joinrequest(self, inter: disnake.ApplicationCommandInteraction, channel: disnake.VoiceChannel):
         """Fordere den Beitritt zum Voice-Channel an."""
         if channel.category_id == self.allowed_category_id:
-            cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT CHANNELOWNERID FROM CUSTOMCHANNEL WHERE CHANNELID = ?", (channel.id,))
+            cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "SELECT CHANNELOWNERID FROM CUSTOMCHANNEL WHERE CHANNELID = ?", (channel.id,))
             owner_id = (await cursor.fetchone())
             if owner_id:
-                user_record = await self.globalfile.get_user_record(userid=owner_id[0])
+                user_record = await self.globalfile.get_user_record(guild=inter.guild, userid=owner_id[0])
                 channel_owner = inter.guild.get_member(
                     int(user_record['DISCORDID']))
                 if channel_owner:

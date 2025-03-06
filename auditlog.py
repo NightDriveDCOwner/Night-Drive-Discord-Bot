@@ -89,9 +89,9 @@ class AuditLog(commands.Cog):
     @commands.Cog.listener()
     async def on_ready(self):
         self.auditlog_channel = self.channelmanager.get_channel(self.bot.guilds[0].id,
-                                                                int(os.getenv("AUDITLOG_CHANNEL_ID")))
-        self.logger.debug("AuditLog is ready.")
+                                                                int(os.getenv("AUDITLOG_CHANNEL_ID")))        
         self.logger.debug(f"Loaded channel ID: {self.auditlog_channel.id}")
+        self.logger.info("AuditLog Cog is ready.")
 
     async def send_audit_log_embed(self, action: disnake.AuditLogAction, entry: disnake.AuditLogEntry):
         thumbnail_url = None
@@ -163,15 +163,15 @@ class AuditLog(commands.Cog):
         except Exception as e:
             self.logger.error(f"Error while sending audit log embed: {e}")
 
-    async def log_audit_entry(self, logtype: str, userid: int, details: str):
+    async def log_audit_entry(self, logtype: str, userid: int, details: str, guild: disnake.Guild = None):
         """Loggt einen Audit-Eintrag in die Datenbank."""
-        await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "INSERT INTO AUDITLOG (LOGTYPE, USERID, DETAILS) VALUES (?, ?, ?)", (logtype, userid, details))
+        await DatabaseConnectionManager.execute_sql_statement(guild.id, guild.name, "INSERT INTO AUDITLOG (LOGTYPE, USERID, DETAILS) VALUES (?, ?, ?)", (logtype, userid, details))
 
     @commands.Cog.listener()
     async def on_audit_log_entry_create(self, entry: disnake.AuditLogEntry):
         action = entry.action
         details = f"Action: {action.name}, Target: {entry.target}, Changes: {entry.changes}, Reason: {entry.reason}, Responsible User: {entry.user.name}"
-        await self.log_audit_entry(action.name, entry.user.id, details)
+        await self.log_audit_entry(action.name, entry.user.id, details, entry.guild)
         await self.send_audit_log_embed(action, entry)
 
 

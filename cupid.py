@@ -20,7 +20,7 @@ class Cupid(commands.Cog):
     def __init__(self, bot: commands.Bot, rolemanager: RoleManager):
         self.bot = bot
         self.logger = logging.getLogger("Cupid")
-        self.globalfile = self.bot.get_cog('Globalfile')
+        self.globalfile : Globalfile = self.bot.get_cog('Globalfile')
         # ThreadPoolExecutor for parallel processing
         self.executor = ThreadPoolExecutor(max_workers=50)
         self.running_calculations = {}  # Dictionary to keep track of running calculations
@@ -39,10 +39,10 @@ class Cupid(commands.Cog):
             self.logger.addHandler(handler)
 
     @commands.Cog.listener()
-    async def on_ready(self):
-        self.logger.debug("DatingBot is ready.")
+    async def on_ready(self):        
         self.bot.add_view(self.create_main_view())
-        await self.sync_dm_status()
+        await self.sync_all_dm_status()
+        self.logger.info("DatingBot Cog is ready.")
 
     def create_main_view(self):
         view = View(timeout=None)
@@ -91,8 +91,8 @@ class Cupid(commands.Cog):
             elif custom_id.startswith("gender_"):
                 await interaction.response.defer()
                 selected_gender = custom_id.split("_")[1]
-                userrecord = await self.globalfile.get_user_record(discordid=interaction.user.id)
-                current_preference = await self.get_user_preference(userrecord['ID'])
+                userrecord = await self.globalfile.get_user_record(guild=interaction.guild, discordid=interaction.user.id)
+                current_preference = await self.get_user_preference(userrecord['ID'], interaction.guild)
 
                 if f",{selected_gender}," in current_preference:
                     new_preference = current_preference.replace(
@@ -100,17 +100,17 @@ class Cupid(commands.Cog):
                 else:
                     new_preference = current_preference + f"{selected_gender},"
 
-                await self.save_user_preference(userrecord['ID'], "preference", new_preference)
+                await self.save_user_preference(userrecord['ID'], "preference", new_preference, interaction.guild)
                 await self.show_user_settings(interaction, edit=True)
 
     @exception_handler
     async def show_user_settings(self, interaction: disnake.MessageInteraction, edit=False):
-        userrecord = await self.globalfile.get_user_record(discordid=interaction.user.id)
-        current_preference = await self.get_user_preference(userrecord['ID'])
+        userrecord = await self.globalfile.get_user_record(guild=interaction.guild, discordid=interaction.user.id)
+        current_preference = await self.get_user_preference(userrecord['ID'], interaction.guild)
 
         if current_preference == ",":
             current_preference = ",male,female,divers,"
-            await self.save_user_preference(userrecord['ID'], "preference", current_preference)
+            await self.save_user_preference(userrecord['ID'], "preference", current_preference, interaction.guild)
 
         embed = Embed(
             title="Einstellungen",
@@ -135,16 +135,16 @@ class Cupid(commands.Cog):
 
     @exception_handler
     async def show_next_question(self, interaction: disnake.MessageInteraction, edit=False):
-        user_record = await self.globalfile.get_user_record(discordid=str(interaction.user.id))
+        user_record = await self.globalfile.get_user_record(guild=interaction.guild, discordid=str(interaction.user.id))
         user_id = user_record['ID']
 
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT COUNT(*) FROM ANSWER WHERE USERID = ?", (user_id,))
+        cursor = await DatabaseConnectionManager.execute_sql_statement(interaction.guild.id, interaction.guild.name, "SELECT COUNT(*) FROM ANSWER WHERE USERID = ?", (user_id,))
         answered_count = (await cursor.fetchone())[0]
 
-        cursor = await DatabaseConnectionManager.execute_sql_statement("SELECT COUNT(*) FROM QUESTION")
+        cursor = await DatabaseConnectionManager.execute_sql_statement(interaction.guild.id, interaction.guild.name,"SELECT COUNT(*) FROM QUESTION")
         total_questions = (await cursor.fetchone())[0]
 
-        cursor = await DatabaseConnectionManager.execute_sql_statement("""
+        cursor = await DatabaseConnectionManager.execute_sql_statement(interaction.guild.id, interaction.guild.name, """
             SELECT q.ID, q.QUESTION 
             FROM QUESTION q 
             LEFT JOIN ANSWER a ON q.ID = a.QUESTIONID AND a.USERID = ? 
@@ -192,15 +192,15 @@ class Cupid(commands.Cog):
             parts = custom_id.split("_")
             if len(parts) == 3:
                 _, question_id, answer = parts
-                await self.save_answer(interaction.user.id, int(question_id), answer)
+                await self.save_answer(interaction.user.id, int(question_id), answer, interaction)
                 await self.handle_answer(interaction, question_id)
 
     @exception_handler
-    async def save_answer(self, user_id, question_id, answer):
-        user_record = await self.globalfile.get_user_record(discordid=str(user_id))
+    async def save_answer(self, user_id, question_id, answer, interaction: disnake.MessageInteraction = None):
+        user_record = await self.globalfile.get_user_record(guild=interaction.guild, discordid=str(user_id))
         if user_record:
             user_id = user_record['ID']
-            await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, """
+            await DatabaseConnectionManager.execute_sql_statement(interaction.guild.id, interaction.guild.name, """
                 INSERT INTO ANSWER (USERID, QUESTIONID, ANSWER)
                 VALUES (?, ?, ?)
                 ON CONFLICT(USERID, QUESTIONID) DO UPDATE SET ANSWER=excluded.ANSWER
@@ -231,32 +231,32 @@ class Cupid(commands.Cog):
                 del self.running_calculations[user_id]
                 return
 
-            userrecord = await self.globalfile.get_user_record(discordid=user_id)
+            userrecord = await self.globalfile.get_user_record(guild=interaction.guild, discordid=user_id)
             user_db_id = userrecord['ID']
-            dmstatus = await self.get_user_dmstatus(user_db_id)
-            user_sex = await self.get_user_sex(user_db_id)
+            dmstatus = await self.get_user_dmstatus(user_db_id, interaction.guild)
+            user_sex = await self.get_user_sex(user_db_id, interaction.guild)
 
             if "close" == dmstatus:
                 await interaction.followup.send("Du hast die Rolle 'DMs Geschlossen'. Bitte entferne diese Rolle, um fortzufahren.", ephemeral=True)
                 del self.running_calculations[user_id]
                 return
 
-            await self.update_user_sex(user_db_id, user_sex)
-            user_answers = await self.get_user_answers(user_db_id)
+            await self.update_user_sex(user_db_id, user_sex, interaction.guild)
+            user_answers = await self.get_user_answers(user_db_id, interaction.guild)
 
             if not user_answers:
                 await interaction.followup.send("Du hast noch keine Fragen beantwortet.", ephemeral=True)
                 del self.running_calculations[user_id]
                 return
 
-            total_questions = await self.get_total_questions()
+            total_questions = await self.get_total_questions(interaction.guild)
 
             if len(user_answers) < total_questions:
                 await interaction.followup.send("Du hast noch nicht alle Fragen beantwortet.", ephemeral=True)
                 del self.running_calculations[user_id]
                 return
 
-            user_preference = await self.get_user_preference(user_db_id)
+            user_preference = await self.get_user_preference(user_db_id, interaction.guild)
             if not user_preference:
                 await interaction.followup.send("Du hast noch keine Präferenzen gesetzt. Mache das bitte über den ""Einstellungs""-Button", ephemeral=True)
                 del self.running_calculations[user_id]
@@ -281,45 +281,37 @@ class Cupid(commands.Cog):
             del self.running_calculations[user_id]
 
     @exception_handler
-    async def update_user_sex(self, user_db_id, user_sex):
-        await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, """
+    async def update_user_sex(self, user_db_id, user_sex, guild: disnake.Guild):
+        await DatabaseConnectionManager.execute_sql_statement(guild.id, guild.name, """
             INSERT INTO USER_SETTINGS (USERID, SETTING, VALUE)
             VALUES (?, 'sex', ?)
             ON CONFLICT(USERID, SETTING) DO UPDATE SET VALUE = excluded.VALUE
         """, (user_db_id, user_sex))
 
-    async def get_user_dmstatus(self, db_user_id):
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT VALUE FROM USER_SETTINGS WHERE USERID = ? AND SETTING = 'dmstatus'", (db_user_id,))
+    async def get_user_dmstatus(self, db_user_id, guild: disnake.Guild):
+        cursor = await DatabaseConnectionManager.execute_sql_statement(guild.id, guild.name, "SELECT VALUE FROM USER_SETTINGS WHERE USERID = ? AND SETTING = 'dmstatus'", (db_user_id,))
         result = (await cursor.fetchone())
         return result[0] if result else None
 
     @exception_handler
-    async def update_user_dmstatus(self, user_db_id, user_sex):
-        await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, """
-            INSERT INTO USER_SETTINGS (USERID, SETTING, VALUE)
-            VALUES (?, 'dmstatus', ?)
-            ON CONFLICT(USERID, SETTING) DO UPDATE SET VALUE = excluded.VALUE
-        """, (user_db_id, user_sex))
-
-    @exception_handler
-    async def get_user_sex(self, db_user_id):
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT VALUE FROM USER_SETTINGS WHERE USERID = ? AND SETTING = 'sex'", (db_user_id,))
+    async def get_user_sex(self, db_user_id, guild: disnake.Guild):
+        cursor = await DatabaseConnectionManager.execute_sql_statement(guild.id, guild.name, "SELECT VALUE FROM USER_SETTINGS WHERE USERID = ? AND SETTING = 'sex'", (db_user_id,))
         result = (await cursor.fetchone())
         return result[0] if result else None
 
     @exception_handler
-    async def get_user_answers(self, user_db_id):
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT QUESTIONID, ANSWER FROM ANSWER WHERE USERID = ?", (user_db_id,))
+    async def get_user_answers(self, user_db_id, guild: disnake.Guild):
+        cursor = await DatabaseConnectionManager.execute_sql_statement(guild.id, guild.name, "SELECT QUESTIONID, ANSWER FROM ANSWER WHERE USERID = ?", (user_db_id,))
         return await cursor.fetchall()
 
     @exception_handler
-    async def get_total_questions(self):
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT COUNT(*) FROM QUESTION")
+    async def get_total_questions(self, guild: disnake.Guild):
+        cursor = await DatabaseConnectionManager.execute_sql_statement(guild.id, guild.name, "SELECT COUNT(*) FROM QUESTION")
         return (await cursor.fetchone())[0]
 
     @exception_handler
-    async def get_user_preference(self, user_db_id):
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT VALUE FROM USER_SETTINGS WHERE USERID = ? AND SETTING = 'preference'", (user_db_id,))
+    async def get_user_preference(self, user_db_id, guild: disnake.Guild):
+        cursor = await DatabaseConnectionManager.execute_sql_statement(guild.id, guild.name, "SELECT VALUE FROM USER_SETTINGS WHERE USERID = ? AND SETTING = 'preference'", (user_db_id,))
         result = (await cursor.fetchone())
         return result[0] if result else ","
 
@@ -334,11 +326,11 @@ class Cupid(commands.Cog):
     async def _calculate_matches(self, interaction: disnake.MessageInteraction, user_db_id, user_answers, total_questions, user_preference, message_id):
         try:
             matches = {}
-            user_sex = await self.get_user_sex(user_db_id)
+            user_sex = await self.get_user_sex(user_db_id, interaction.guild)
 
             # Get all answers for all users for the questions the current user answered
             question_ids = [question_id for question_id, _ in user_answers]
-            cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, """
+            cursor = await DatabaseConnectionManager.execute_sql_statement(interaction.guild.id, interaction.guild.name, """
                 SELECT USERID, QUESTIONID, ANSWER 
                 FROM ANSWER 
                 WHERE QUESTIONID IN ({}) 
@@ -360,12 +352,12 @@ class Cupid(commands.Cog):
                 answers_by_user[match_user_id][question_id] = match_answer
 
             for match_user_id, match_answers in answers_by_user.items():
-                cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT VALUE FROM USER_SETTINGS WHERE USERID = ? AND SETTING = 'preference'", (match_user_id,))
+                cursor = await DatabaseConnectionManager.execute_sql_statement(interaction.guild.id, interaction.guild.name, "SELECT VALUE FROM USER_SETTINGS WHERE USERID = ? AND SETTING = 'preference'", (match_user_id,))
                 match_preference = (await cursor.fetchone())
                 if not match_preference or not any(f",{user_sex}," in match_preference[0] for user_sex in ["male", "female", "divers"]):
                     continue
 
-                match_user_record = await self.globalfile.get_user_record(user_id=match_user_id)
+                match_user_record = await self.globalfile.get_user_record(guild=interaction.guild, user_id=match_user_id)
                 if not match_user_record:
                     continue
 
@@ -378,11 +370,11 @@ class Cupid(commands.Cog):
                 if not match_member:
                     continue
 
-                dmstatus = await self.get_user_dmstatus(match_user_record['ID'])
+                dmstatus = await self.get_user_dmstatus(match_user_record['ID'], interaction.guild)
                 if dmstatus == "close":
                     continue
 
-                matches_sex = await self.get_user_sex(match_user_record['ID'])
+                matches_sex = await self.get_user_sex(match_user_record['ID'], interaction.guild)
                 if f",{matches_sex}," not in user_preference:
                     continue
 
@@ -405,7 +397,7 @@ class Cupid(commands.Cog):
                        100 for k, v in matches.items()}
             sorted_matches = sorted(
                 matches.items(), key=lambda x: x[1], reverse=True)[:10]
-            match_list = "\n".join([f"<@{(await self.globalfile.get_user_record(user_id=match_id))['DISCORDID']}>: {score:.2f}% übereinstimmende Antworten" for match_id, score in sorted_matches])
+            match_list = "\n".join([f"<@{(await self.globalfile.get_user_record(guild=interaction.guild, user_id=match_id))['DISCORDID']}>: {score:.2f}% übereinstimmende Antworten" for match_id, score in sorted_matches])
 
             embed = Embed(
                 title="Passende User",
@@ -413,8 +405,6 @@ class Cupid(commands.Cog):
                 color=disnake.Color.green()
             )
             self.result_queue.put((interaction, message_id, embed))
-        except Exception as e:
-            self.logger.critical(f"An error occurred: {e}")
         finally:
             del self.running_calculations[interaction.user.id]
             await self.process_results()
@@ -440,7 +430,6 @@ class Cupid(commands.Cog):
                 self.logger.error(f"Error in process_results: {e}")
             await asyncio.sleep(1)
 
-    @commands.slash_command(guild_ids=[854698446996766730])
     async def running_calculations(self, inter: disnake.ApplicationCommandInteraction):
         """Zeigt die Benutzer, für die die Berechnungen noch laufen."""
         running_users = [
@@ -473,30 +462,30 @@ class Cupid(commands.Cog):
             else:
                 user_sex = "divers"
 
-            userrecord = await self.globalfile.get_user_record(discordid=inter.user.id)
+            userrecord = await self.globalfile.get_user_record(guild=inter.guild, discordid=inter.user.id)
             user_id = userrecord['ID']
 
             # Update user's sex in the database
-            cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, """
+            cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, """
                 INSERT INTO USER_SETTINGS (USERID, SETTING, VALUE)
                 VALUES (?, 'sex', ?)
                 ON CONFLICT(USERID, SETTING) DO UPDATE SET VALUE = excluded.VALUE
             """, (user_id, user_sex))
 
-            cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT QUESTIONID, ANSWER FROM ANSWER WHERE USERID = ?", (user_id,))
+            cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "SELECT QUESTIONID, ANSWER FROM ANSWER WHERE USERID = ?", (user_id,))
             user_answers = await cursor.fetchall()
             if not user_answers:
                 await inter.followup.send("Du hast noch keine Fragen beantwortet.", ephemeral=True)
                 return
 
-            cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT COUNT(*) FROM QUESTION")
+            cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "SELECT COUNT(*) FROM QUESTION")
             total_questions = (await cursor.fetchone())[0]
 
             if len(user_answers) < total_questions:
                 await inter.followup.send("Du hast noch nicht alle Fragen beantwortet.", ephemeral=True)
                 return
 
-            cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT VALUE FROM USER_SETTINGS WHERE USERID = ? AND SETTING = 'preference'", (user_id,))
+            cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "SELECT VALUE FROM USER_SETTINGS WHERE USERID = ? AND SETTING = 'preference'", (user_id,))
             user_preference = (await cursor.fetchone())
             if not user_preference:
                 await inter.followup.send("Du hast noch keine Präferenzen gesetzt. Mache das bitte über den ""Einstellungs""-Button", ephemeral=True)
@@ -506,19 +495,19 @@ class Cupid(commands.Cog):
             matches = {}
             match_details = {}
             for question_id, user_answer in user_answers:
-                cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT USERID, ANSWER FROM ANSWER WHERE QUESTIONID = ?", (question_id,))
+                cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "SELECT USERID, ANSWER FROM ANSWER WHERE QUESTIONID = ?", (question_id,))
                 matching_users = await cursor.fetchall()
                 for match in matching_users:
                     match_user_id, match_answer = match
                     if match_user_id == user_id:
                         continue
 
-                    cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT VALUE FROM USER_SETTINGS WHERE USERID = ? AND SETTING = 'preference'", (match_user_id,))
+                    cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "SELECT VALUE FROM USER_SETTINGS WHERE USERID = ? AND SETTING = 'preference'", (match_user_id,))
                     match_preference = (await cursor.fetchone())
                     if not match_preference or match_preference[0] != user_sex:
                         continue
 
-                    match_user_record = await self.globalfile.get_user_record(user_id=match_user_id)
+                    match_user_record = await self.globalfile.get_user_record(guild=inter.guild, user_id=match_user_id)
                     match_discord_id = match_user_record['DISCORDID']
                     match_member = await inter.guild.fetch_member(match_discord_id)
                     if not match_member:
@@ -558,7 +547,7 @@ class Cupid(commands.Cog):
 
             sorted_matches = sorted(
                 matches.items(), key=lambda x: x[1], reverse=True)[:10]
-            match_list = "\n".join([f"<@{await self.globalfile.get_user_record(user_id=match_id)['DISCORDID']}>: {score:.2f}% übereinstimmende Antworten" for match_id, score in sorted_matches])
+            match_list = "\n".join([f"<@{await self.globalfile.get_user_record(guild=inter.guild, user_id=match_id)['DISCORDID']}>: {score:.2f}% übereinstimmende Antworten" for match_id, score in sorted_matches])
 
             for match_id, score in sorted_matches:
                 self.logger.debug(
@@ -578,7 +567,7 @@ class Cupid(commands.Cog):
                     top_match_id, {"+2": 0, "+1": 0, "+0.5": 0})
                 debug_embed = Embed(
                     title="Debug Informationen für den Top-Match",
-                    description=f"User: <@{await self.globalfile.get_user_record(user_id=top_match_id)['DISCORDID']}>",
+                    description=f"User: <@{await self.globalfile.get_user_record(guild=inter.guild, user_id=top_match_id)['DISCORDID']}>",
                     color=disnake.Color.blue()
                 )
                 debug_embed.add_field(
@@ -592,21 +581,26 @@ class Cupid(commands.Cog):
             self.logger.critical(f"An error occurred: {e}")
 
     @exception_handler
-    async def save_user_preference(self, user_id, setting, value):
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, """
-            SELECT VALUE FROM USER_SETTINGS WHERE USERID = ? AND SETTING = ?
-        """, (user_id, setting))
-        existing_value = (await cursor.fetchone())
+    async def save_user_preference(self, user_id, setting, value, guild: disnake.Guild):
+        try:
+            cursor = await DatabaseConnectionManager.execute_sql_statement(guild.id, guild.name, """
+                SELECT VALUE FROM USER_SETTINGS WHERE USERID = ? AND SETTING = ?
+            """, (user_id, setting))
+            existing_value = (await cursor.fetchone())
 
-        if existing_value:
-            await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, """
-                UPDATE USER_SETTINGS SET VALUE = ? WHERE USERID = ? AND SETTING = ?
-            """, (value, user_id, setting))
-        else:
-            await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, """
-                INSERT INTO USER_SETTINGS (USERID, SETTING, VALUE)
-                VALUES (?, ?, ?)
-            """, (user_id, setting, value))
+            if existing_value:
+                await DatabaseConnectionManager.execute_sql_statement(guild.id, guild.name, """
+                    UPDATE USER_SETTINGS SET VALUE = ? WHERE USERID = ? AND SETTING = ?
+                """, (value, user_id, setting))
+            else:
+                await DatabaseConnectionManager.execute_sql_statement(guild.id, guild.name, """
+                    INSERT INTO USER_SETTINGS (USERID, SETTING, VALUE)
+                    VALUES (?, ?, ?)
+                """, (user_id, setting, value))
+        except Exception as e:
+            self.logger.critical(f"An error occurred: {e}")
+            member = await guild.fetch_member(461969832074543105)
+            await member.send(f"An error occurred: {e} in {setting} for user {user_id}")
 
     @exception_handler
     async def _recalculate_invite_xp(self, inter: disnake.ApplicationCommandInteraction):
@@ -618,11 +612,11 @@ class Cupid(commands.Cog):
         factor = int(os.getenv("FACTOR", 50))
 
         # Hole alle Einträge aus der INVITE_XP-Tabelle
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT USERID, SUM(COUNT) FROM INVITE_XP GROUP BY USERID")
+        cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "SELECT USERID, SUM(COUNT) FROM INVITE_XP GROUP BY USERID")
         invite_xp_data = await cursor.fetchall()
         for user_id, total_invite_count in invite_xp_data:
             invite_xp = total_invite_count * factor
-            await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "UPDATE EXPERIENCE SET INVITE = ? WHERE USERID = ?", (invite_xp, user_id))
+            await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "UPDATE EXPERIENCE SET INVITE = ? WHERE USERID = ?", (invite_xp, user_id))
 
         await inter.edit_original_response(content="INVITEXP Werte wurden erfolgreich neu berechnet.")
 
@@ -631,11 +625,11 @@ class Cupid(commands.Cog):
         # Hole alle Benutzer-IDs aus der ANSWER-Tabelle
         await inter.response.defer()
 
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT DISTINCT USERID FROM ANSWER")
+        cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "SELECT DISTINCT USERID FROM ANSWER")
         answer_user_ids = [row[0] for row in cursor.fetchall()]
 
         # Hole alle Benutzer-IDs aus der USER_SETTINGS-Tabelle
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT DISTINCT USERID FROM USER_SETTINGS")
+        cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "SELECT DISTINCT USERID FROM USER_SETTINGS")
         settings_user_ids = [row[0] for row in cursor.fetchall()]
 
         # Kombiniere alle Benutzer-IDs
@@ -643,14 +637,14 @@ class Cupid(commands.Cog):
 
         # Überprüfe, ob die Benutzer noch auf dem Server sind
         for user_id in all_user_ids:
-            user_record = await self.globalfile.get_user_record(user_id=user_id)
+            user_record = await self.globalfile.get_user_record(guild=inter.guild, user_id=user_id)
             if user_record:
                 discord_id = user_record['DISCORDID']
                 member = inter.guild.get_member(int(discord_id))
                 if not member:
                     # Lösche die Daten des Benutzers, wenn er nicht mehr auf dem Server ist
-                    cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "DELETE FROM ANSWER WHERE USERID = ?", (int(user_id),))
-                    cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "DELETE FROM USER_SETTINGS WHERE USERID = ?", (int(user_id),))
+                    cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "DELETE FROM ANSWER WHERE USERID = ?", (int(user_id),))
+                    cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "DELETE FROM USER_SETTINGS WHERE USERID = ?", (int(user_id),))
                     self.logger.debug(
                         f"Deleted data for user ID {user_id} who is no longer on the server.")
 
@@ -661,9 +655,12 @@ class Cupid(commands.Cog):
         if before.roles != after.roles:
             await self.update_dm_status(after)
 
-    async def sync_dm_status(self):
-        # Replace with your guild ID
-        guild = self.bot.get_guild(854698446996766730)
+    async def sync_all_dm_status(self):
+        for guild in self.bot.guilds:
+            await self.sync_dm_status(guild)
+
+    async def sync_dm_status(self, guild: disnake.Guild):
+        # Replace with your guild ID    
         for member in guild.members:
             await self.update_dm_status(member)
 
@@ -682,17 +679,17 @@ class Cupid(commands.Cog):
         else:
             gender = None
 
-        user_record = await self.globalfile.get_user_record(discordid=member.id)
+        user_record = await self.globalfile.get_user_record(guild=member.guild, discordid=member.id)
         if user_record:
             user_db_id = user_record['ID']
-            cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT VALUE FROM USER_SETTINGS WHERE USERID = ? AND SETTING = 'dmstatus' AND VALUE = ?", (user_db_id, dm_status))
+            cursor = await DatabaseConnectionManager.execute_sql_statement(member.guild.id, member.guild.name, "SELECT VALUE FROM USER_SETTINGS WHERE USERID = ? AND SETTING = 'dmstatus' AND VALUE = ?", (user_db_id, dm_status))
             if not (await cursor.fetchone()):
-                await self.save_user_preference(user_db_id, 'dmstatus', dm_status)
+                await self.save_user_preference(user_db_id, 'dmstatus', dm_status, member.guild)
 
             if gender:
-                cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT VALUE FROM USER_SETTINGS WHERE USERID = ? AND SETTING = 'sex' AND VALUE = ?", (user_db_id, gender))
+                cursor = await DatabaseConnectionManager.execute_sql_statement(member.guild.id, member.guild.name, "SELECT VALUE FROM USER_SETTINGS WHERE USERID = ? AND SETTING = 'sex' AND VALUE = ?", (user_db_id, gender))
                 if not (await cursor.fetchone()):
-                    await self.save_user_preference(user_db_id, 'sex', gender)
+                    await self.save_user_preference(user_db_id, 'sex', gender, member.guild)
 
 
 def setupCupid(bot: commands.Bot, rolemanager: RoleManager):

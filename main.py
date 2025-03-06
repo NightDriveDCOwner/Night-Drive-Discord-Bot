@@ -15,6 +15,8 @@ from roleassignment import setupRoleAssignment
 from cupid import setupCupid
 from tmp import setupTmp
 from giveaway import setupGiveaway
+from friend import setupFriend
+from userprofile import setupProfile
 import logging
 import asyncio
 import os
@@ -23,6 +25,7 @@ import requests
 import time
 from rolemanager import RoleManager
 from channelmanager import ChannelManager
+from dotenv import load_dotenv, set_key
 
 
 class Startup:
@@ -32,27 +35,29 @@ class Startup:
         self.channelmanager = ChannelManager(bot)
 
     async def on_ready(self):
+        set_key("envs/config.env", "READY", "False")
         logger.info("Bot is ready. Caching roles...")
         await self.rolemanager.cache_roles()
         await self.channelmanager.cache_channels()
         logger.info("Roles cached. Setting up extensions...")
         setupGlobal(self.bot, self.rolemanager)
         setupTicket(self.bot, self.rolemanager)
-        setupModeration(self.bot, self.rolemanager)
-        setupJoin(self.bot, self.rolemanager)
+        setupModeration(self.bot, self.rolemanager)        
         setupVoice(self.bot, self.rolemanager)
         setupReaction(self.bot, self.rolemanager)
         setupLevel(self.bot, self.rolemanager)
         setupCountbot(self.bot, self.rolemanager, self.channelmanager)
         setupClientAI(self.bot, self.rolemanager, self.channelmanager)
         setupRoleAssignment(self.bot, self.rolemanager)
+        setupJoin(self.bot, self.rolemanager)        
         setupCupid(self.bot, self.rolemanager)
         setupTmp(self.bot, self.rolemanager)
         setupGiveaway(self.bot, self.rolemanager)
-        setupCommands(self.bot, self.rolemanager)
+        setupFriend(self.bot, self.rolemanager, self.channelmanager)
+        setupProfile(self.bot, self.rolemanager)
+        setupCommands(self.bot, self.rolemanager)        
         setupAuditLog(self.bot, self.rolemanager, self.channelmanager)
         logger.info("All extensions set up.")
-
 
 root_logger = logging.getLogger()
 for handler in root_logger.handlers[:]:
@@ -72,14 +77,12 @@ bot = commands.Bot(intents=intents, command_prefix=None)
 
 startup = Startup(bot)
 
-
 @bot.event
 async def on_ready():
     await startup.on_ready()
-    for cog in bot.cogs.values():
-        if hasattr(cog, 'on_ready'):
-            await cog.on_ready()
-
+    for Cog in bot.cogs.values():
+        if hasattr(Cog, 'on_ready'):
+            await Cog.on_ready()
 
 def check_rate_limits(token):
     headers = {
@@ -110,7 +113,6 @@ def check_rate_limits(token):
             print(
                 f"Failed to get rate limit information: {response.status_code}")
             return False
-
 
 async def main():
     load_dotenv(dotenv_path="envs/token.env")

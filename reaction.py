@@ -42,6 +42,7 @@ class Reaction(commands.Cog):
         self.self_reveal_channel = self.bot.get_channel(1061444217076994058)
         self.botrolle = self.rolemanager.get_role(
             self.bot.guilds[0].id, 854698446996766738)
+        self.logger.info("Reaction Cog is ready.")
 
     @commands.Cog.listener()
     async def on_message(self, message: disnake.Message):
@@ -120,7 +121,7 @@ class Reaction(commands.Cog):
             if member and message.channel.id != 1208770898832658493 and message.channel.id != 1219347644640530553:
                 if self.botrolle not in member.roles:
                     try:
-                        User = await self.globalfile.admin_did_something(disnake.AuditLogAction.message_delete, member)
+                        User = await self.globalfile.admin_did_something(disnake.AuditLogAction.message_delete, member, message.guild)
                         avatar_url = member.avatar.url if member.avatar else member.default_avatar.url
 
                         current_datetime = (await self.globalfile.get_current_time())
@@ -148,13 +149,13 @@ class Reaction(commands.Cog):
 
                         # Ermitteln der USERID des Admins, der die Nachricht gelöscht hat
 
-                        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT ID FROM USER WHERE DISCORDID = ?", (User.userid,))
+                        cursor = await DatabaseConnectionManager.execute_sql_statement(message.guild.id, message.guild.name, "SELECT ID FROM USER WHERE DISCORDID = ?", (User.userid,))
                         admin_user_id = (await cursor.fetchone())
                         if admin_user_id:
                             admin_user_id = admin_user_id[0]
 
                         # Aktualisieren der Nachricht in der Datenbank mit DELETED_BY
-                        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "UPDATE MESSAGE SET DELETED_BY = ? WHERE MESSAGEID = ? AND CHANNELID = ?", (admin_user_id, message.id, message.channel.id))
+                        cursor = await DatabaseConnectionManager.execute_sql_statement(message.guild.id, message.guild.name, "UPDATE MESSAGE SET DELETED_BY = ? WHERE MESSAGEID = ? AND CHANNELID = ?", (admin_user_id, message.id, message.channel.id))
 
                         for embed in embeds:
                             if User.username == member.name:
@@ -190,12 +191,12 @@ class Reaction(commands.Cog):
 
                     # Ermitteln der MESSAGE_BEFORE-ID
 
-                    cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT ID FROM MESSAGE WHERE MESSAGEID = ? AND CHANNELID = ?", (before.id, before.channel.id))
+                    cursor = await DatabaseConnectionManager.execute_sql_statement(after.guild.id, after.guild.name, "SELECT ID FROM MESSAGE WHERE MESSAGEID = ? AND CHANNELID = ?", (before.id, before.channel.id))
                     message_before_id = (await cursor.fetchone())
                     if message_before_id:
                         message_before_id = message_before_id[0]
 
-                    userrecord = await self.globalfile.get_user_record(discordid=member.id)
+                    userrecord = await self.globalfile.get_user_record(guild=after.guild, discordid=member.id)
                     # Speichern der bearbeiteten Nachricht in der Datenbank
                     current_datetime = (await self.globalfile.get_current_time()).strftime('%Y-%m-%d %H:%M:%S')
                     image_paths = [
@@ -210,7 +211,7 @@ class Reaction(commands.Cog):
                         image_path_fields = ""
                         image_path_values = ""
                     query = f"INSERT INTO MESSAGE (CONTENT, USERID, CHANNELID, MESSAGEID, MESSAGE_BEFORE, INSERT_DATE{image_path_fields}) VALUES (?, ?, ?, ?, ?, ?{image_path_values})"
-                    cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, query, (after.content, userrecord['ID'], after.channel.id, after.id, message_before_id, current_datetime, *image_paths))
+                    cursor = await DatabaseConnectionManager.execute_sql_statement(after.guild.id, after.guild.name, query, (after.content, userrecord['ID'], after.channel.id, after.id, message_before_id, current_datetime, *image_paths))
 
                     await self.messagelog.send(embed=embed)
         except Exception as e:

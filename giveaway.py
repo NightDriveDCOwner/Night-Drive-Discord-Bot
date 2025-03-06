@@ -21,7 +21,11 @@ class Giveaway(commands.Cog):
                 '[%(asctime)s - %(name)s - %(levelname)s]: %(message)s')
             handler = logging.StreamHandler()
             handler.setFormatter(formatter)
-            self.logger.addHandler(handler)
+            self.logger.addHandler(handler)#
+    
+    @commands.Cog.listener()
+    async def on_ready(self):
+        self.logger.info("Giveaway Cog is ready.")
 
     async def _create_giveaway(
         self,
@@ -38,7 +42,7 @@ class Giveaway(commands.Cog):
             await inter.response.send_message("Du kannst nicht sowohl allowed_roles als auch excluded_roles angeben.", ephemeral=True)
             return
 
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, """
+        cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, """
             INSERT INTO GIVEAWAY (CHANNELID, TITLE, DESCRIPTION, PRIZE, LEVEL_BASED, ALLOWED_ROLES, EXCLUDED_ROLES)
             VALUES (?, ?, ?, ?, ?, ?, ?)
         """, (channel.id, title, description, prize, level_based, allowed_roles, excluded_roles))
@@ -56,10 +60,12 @@ class Giveaway(commands.Cog):
         embed.set_footer(
             text="Klicke auf den Button unten, um am Gewinnspiel teilzunehmen! | ID: " + str(giveaway_id))
 
-        view = GiveawayView(giveaway_id, cursor)
+        view = GiveawayView(giveaway_id, inter.guild.id, inter.guild.name)
+        await view.update_button_label()
         message = await channel.send(embed=embed, view=view)
 
         await inter.response.send_message(f"Gewinnspiel erstellt in {channel.mention}", ephemeral=True)
+        self.logger.info(f"Created giveaway in channel {channel.id}")
 
     @commands.Cog.listener()
     async def on_interaction(self, interaction: disnake.Interaction):
@@ -74,7 +80,7 @@ class Giveaway(commands.Cog):
                     await interaction.response.send_message("Ungültige Interaktion.", ephemeral=True)
 
     async def enter_giveaway(self, interaction: disnake.MessageInteraction, giveaway_id: int):
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT * FROM GIVEAWAY WHERE ID = ?", (giveaway_id,))
+        cursor = await DatabaseConnectionManager.execute_sql_statement(interaction.guild.id, interaction.guild.name, "SELECT * FROM GIVEAWAY WHERE ID = ?", (giveaway_id,))
         giveaway = (await cursor.fetchone())
 
         if giveaway is None:
@@ -103,14 +109,14 @@ class Giveaway(commands.Cog):
             await interaction.response.send_message("Benutzer nicht gefunden.", ephemeral=True)
             return
         user_id = user_record["ID"]
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT * FROM GIVEAWAY_ENTRIES WHERE GIVEAWAY_ID = ? AND USERID = ?", (giveaway_id, user_id))
+        cursor = await DatabaseConnectionManager.execute_sql_statement(interaction.guild.id, interaction.guild.name, "SELECT * FROM GIVEAWAY_ENTRIES WHERE GIVEAWAY_ID = ? AND USERID = ?", (giveaway_id, user_id))
         entry = (await cursor.fetchone())
 
         if entry:
             await interaction.response.send_message("Du hast bereits an diesem Gewinnspiel teilgenommen.", ephemeral=True)
             return
 
-        await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "INSERT INTO GIVEAWAY_ENTRIES (GIVEAWAY_ID, USERID) VALUES (?, ?)", (giveaway_id, user_id))
+        await DatabaseConnectionManager.execute_sql_statement(interaction.guild.id, interaction.guild.name, "INSERT INTO GIVEAWAY_ENTRIES (GIVEAWAY_ID, USERID) VALUES (?, ?)", (giveaway_id, user_id))
 
         view = GiveawayView(giveaway_id, cursor)
         view.update_button_label()
@@ -120,7 +126,7 @@ class Giveaway(commands.Cog):
 
     async def _draw_giveaway(self, inter: disnake.ApplicationCommandInteraction, giveaway_id: int):
         await inter.response.defer()
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT * FROM GIVEAWAY WHERE ID = ?", (giveaway_id,))
+        cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "SELECT * FROM GIVEAWAY WHERE ID = ?", (giveaway_id,))
         giveaway = (await cursor.fetchone())
 
         if not giveaway:
@@ -129,7 +135,7 @@ class Giveaway(commands.Cog):
 
         level_based = giveaway[5]
 
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT USERID FROM GIVEAWAY_ENTRIES WHERE GIVEAWAY_ID = ?", (giveaway_id,))
+        cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "SELECT USERID FROM GIVEAWAY_ENTRIES WHERE GIVEAWAY_ID = ?", (giveaway_id,))
         entries = await cursor.fetchall()
         if not entries:
             await inter.response.send_message("Keine Teilnehmer für dieses Gewinnspiel.", ephemeral=True)
@@ -143,7 +149,7 @@ class Giveaway(commands.Cog):
                 continue
 
             if level_based:
-                cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT LEVEL FROM EXPERIENCE WHERE USERID = ?", (user_id,))
+                cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "SELECT LEVEL FROM EXPERIENCE WHERE USERID = ?", (user_id,))
                 user_level = (await cursor.fetchone())
                 if user_level:
                     level = user_level[0]
@@ -174,20 +180,23 @@ class Giveaway(commands.Cog):
 
 
 class GiveawayView(disnake.ui.View):
-    async def __init__(self, giveaway_id: int, cursor):
+    def __init__(self, giveaway_id: int, guild_id: int, guild_name: str):
         super().__init__(timeout=None)
         self.giveaway_id = giveaway_id
-        await self.update_button_label()
+        self.guild_id = guild_id
+        self.guild_name = guild_name
 
     async def update_button_label(self):
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT COUNT(*) FROM GIVEAWAY_ENTRIES WHERE GIVEAWAY_ID = ?", (self.giveaway_id,))
+        cursor = await DatabaseConnectionManager.execute_sql_statement(self.guild_id, self.guild_name, "SELECT COUNT(*) FROM GIVEAWAY_ENTRIES WHERE GIVEAWAY_ID = ?", (self.giveaway_id,))
         count = (await cursor.fetchone())[0]
         self.children[0].label = f"Am Gewinnspiel teilnehmen ({count})"
         self.children[0].custom_id = f"enter_giveaway_{self.giveaway_id}"
 
     @disnake.ui.button(label="Am Gewinnspiel teilnehmen", style=disnake.ButtonStyle.green, custom_id="enter_giveaway_button")
     async def enter_giveaway(self, button: disnake.ui.Button, interaction: disnake.MessageInteraction):
+        guild = interaction.guild
         button.custom_id = f"enter_giveaway_{self.giveaway_id}"
+        await interaction.response.send_message(f"Button gedrückt auf Server: {guild.name}", ephemeral=True)
 
 
 def setupGiveaway(bot: commands.Bot, rolemanager):

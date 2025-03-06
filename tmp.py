@@ -51,6 +51,7 @@ class Tmp(commands.Cog):
         self.verified_role = self.rolemanager.get_role(
             self.bot.guilds[0].id, 1066793314482913391)
         self.mod_channel = self.bot.get_channel(1090588808216596490)
+        self.logger.info("Tmp Cog is ready.")
 
     @exception_handler
     async def _info(self, inter: ApplicationCommandInteraction):
@@ -115,7 +116,7 @@ class Tmp(commands.Cog):
         await inter.response.defer(ephemeral=True)  # Verzögere die Interaktion
         try:
             cursor = await DatabaseConnectionManager.execute_sql_statement(
-                self.bot.guilds[0].id, self.bot.guilds[0].name,
+                inter.guild.id, inter.guild.name,
                 "SELECT USERID, BANNED_TO FROM BAN WHERE UNBANNED = 0 ORDER BY BANNED_TO DESC"
             )
             bans = await cursor.fetchall()
@@ -136,7 +137,7 @@ class Tmp(commands.Cog):
             for ban in bans[start:end]:
                 user_id, unban_time = ban
                 cursor = await DatabaseConnectionManager.execute_sql_statement(
-                    self.bot.guilds[0].id, self.bot.guilds[0].name,
+                    inter.guild.id, inter.guild.name,
                     "SELECT USERNAME FROM USER WHERE ID = ?", (user_id,)
                 )
                 username_result = (await cursor.fetchone())
@@ -203,7 +204,7 @@ class Tmp(commands.Cog):
         word = word.strip()  # Entferne führende und abschließende Leerzeichen
 
         # Überprüfe, ob das Wort bereits in der Tabelle existiert
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT word FROM BLACKLIST WHERE WORD = ?", (word,))
+        cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "SELECT word FROM BLACKLIST WHERE WORD = ?", (word,))
         result = (await cursor.fetchone())
 
         embed = disnake.Embed(title="Blacklist Hinzufügen",
@@ -211,7 +212,7 @@ class Tmp(commands.Cog):
 
         if not result:
             # Wort existiert nicht, füge es hinzu
-            await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "INSERT INTO BLACKLIST (WORD,LEVEL) VALUES (?,?)", (word, level))
+            await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "INSERT INTO BLACKLIST (WORD,LEVEL) VALUES (?,?)", (word, level))
 
             embed.description = f"{word} wurde zur Blacklist-Liste hinzugefügt."
         else:
@@ -227,7 +228,7 @@ class Tmp(commands.Cog):
         word = word.strip()  # Entferne führende und abschließende Leerzeichen
 
         # Überprüfe, ob das Wort in der Tabelle existiert
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT word FROM Blacklist WHERE word = ?", (word,))
+        cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "SELECT word FROM Blacklist WHERE word = ?", (word,))
         result = (await cursor.fetchone())
 
         embed = disnake.Embed(title="Blacklist Entfernen",
@@ -235,7 +236,7 @@ class Tmp(commands.Cog):
 
         if result:
             # Wort existiert, entferne es
-            cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "DELETE FROM Blacklist WHERE word = ?", (word,))
+            cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "DELETE FROM Blacklist WHERE word = ?", (word,))
 
             embed.description = f"{word} wurde von der Blacklist-Liste entfernt."
         else:
@@ -249,7 +250,7 @@ class Tmp(commands.Cog):
         await inter.response.defer()  # Verzögere die Interaktion
 
         # Hole alle Wörter aus der Tabelle
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT word FROM Blacklist")
+        cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "SELECT word FROM Blacklist")
         badwords = await cursor.fetchall()
         embed = disnake.Embed(title="Aktuelle Badwords",
                               color=disnake.Color.red())
@@ -302,10 +303,10 @@ class Tmp(commands.Cog):
         if proof:
             image_path = await self.globalfile.save_image(proof, f"{user.id}")
 
-        userrecord = await self.globalfile.get_user_record(discordid=user.id)
+        userrecord = await self.globalfile.get_user_record(guild=inter.guild, discordid=user.id)
 
         current_datetime = (await self.globalfile.get_current_time()).strftime('%Y-%m-%d %H:%M:%S')
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "INSERT INTO NOTE (NOTE, USERID, IMAGEPATH, INSERT_DATE) VALUES (?, ?, ?, ?)", (reason, userrecord['ID'], image_path, current_datetime))
+        cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "INSERT INTO NOTE (NOTE, USERID, IMAGEPATH, INSERT_DATE) VALUES (?, ?, ?, ?)", (reason, userrecord['ID'], image_path, current_datetime))
 
         # Hole die zuletzt eingefügte ID
         caseid = cursor.lastrowid
@@ -320,15 +321,16 @@ class Tmp(commands.Cog):
         if image_path:
             embed.add_field(name="Bildpfad", value=image_path, inline=False)
         embed.set_footer(text=f"ID: {user.id} - heute um {((await self.globalfile.get_current_time()).strftime('%H:%M:%S'))} Uhr")
-        await inter.edit_original_response(embed=embed)
+        await inter.edit_original_response(content=f"Notiz für {user.mention} erstellt. Logged in {self.mod_channel.mention} als [ID: {caseid}]")
+        await self.mod_channel.send(embed=embed)
 
     @exception_handler
     async def _note_delete(self, inter: disnake.ApplicationCommandInteraction, caseid: int, reason: str):
         """Markiert eine Note als gelöscht basierend auf der Note ID."""
         await inter.response.defer(ephemeral=True)
         try:
-            userrecord = await self.globalfile.get_user_record(discordid=inter.user.id)
-            await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "UPDATE NOTE SET REMOVED = 1, REMOVED_REASON = ?, REMOVED_BY = ? WHERE ID = ?", (caseid, reason, userrecord['ID']))
+            userrecord = await self.globalfile.get_user_record(guild=inter.guild, discordid=inter.user.id)
+            await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "UPDATE NOTE SET REMOVED = 1, REMOVED_REASON = ?, REMOVED_BY = ? WHERE ID = ?", (caseid, reason, userrecord['ID']))
 
             embed = disnake.Embed(
                 title="Note gelöscht", description=f"Note mit der ID {caseid} wurde als gelöscht markiert.", color=disnake.Color.green())
@@ -337,171 +339,7 @@ class Tmp(commands.Cog):
             await inter.edit_original_response(f"Note mit der ID {caseid} wurde als gelöscht markiert.")
         except sqlite3.Error as e:
             await inter.edit_original_response(f"Ein Fehler ist aufgetreten: {e}")
-            self.logger.critical(f"An error occurred: {e}")
-
-    @exception_handler
-    async def _user_profile(self, inter: disnake.ApplicationCommandInteraction, user: disnake.User):
-        """Zeigt das Profil eines Benutzers an, einschließlich Notizen, Warnungen und Bans."""
-        await inter.response.defer()
-
-        userrecord = await self.globalfile.get_user_record(discordid=user.id)
-
-        # Hole die Benutzerinformationen aus der Tabelle User
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT * FROM USER WHERE ID = ?", (userrecord['ID'],))
-        user_info = (await cursor.fetchone())
-
-        if not user_info:
-            await inter.edit_original_response(content=f"Keine Informationen für Benutzer {user.mention} gefunden.")
-            return
-
-        # Hole alle Notizen des Benutzers aus der Tabelle Note
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT * FROM NOTE WHERE USERID = ? AND REMOVED <> 1", (userrecord['ID'],))
-        notes = await cursor.fetchall()
-        # Hole alle Warnungen des Benutzers aus der Tabelle Warn
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT * FROM WARN WHERE USERID = ? AND REMOVED <> 1", (userrecord['ID'],))
-        warns = await cursor.fetchall()
-        # Hole alle Bans des Benutzers aus der Tabelle Ban
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT * FROM BAN WHERE USERID = ?", (userrecord['ID'],))
-        bans = await cursor.fetchall()
-        # Hole die Anzahl der geschriebenen Nachrichten
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT COUNT(*) FROM MESSAGE WHERE USERID = ?", (userrecord['ID'],))
-        message_count = (await cursor.fetchone())[0]
-
-        # Hole die Minuten der bisherigen Voice-Aktivität
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT SUM(VOICE) FROM VOICE_XP WHERE USERID = ?", (userrecord['ID'],))
-        voice_minutes = (await cursor.fetchone())[0] or 0
-
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT SUM(COUNT) FROM INVITE_XP WHERE USERID = ?", (userrecord['ID'],))
-        invites = (await cursor.fetchone())[0] or 0
-
-        # Hole die XP und das Level des Benutzers
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT (MESSAGE + VOICE + INVITE + BONUS) AS TOTAL_XP, LEVEL, MESSAGE, VOICE, INVITE, BONUS FROM EXPERIENCE WHERE USERID = ?", (userrecord['ID'],))
-        xp_info = (await cursor.fetchone())
-        total_xp = xp_info[0]
-        current_level = xp_info[1]
-        message_xp = xp_info[2]
-        voice_xp = xp_info[3]
-        invite_xp = xp_info[4]
-        bonus_xp = xp_info[5]
-
-        # Berechne die XP für das nächste Level
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT XP FROM LEVELXP WHERE LEVELNAME = ?", (current_level,))
-        current_level_xp = (await cursor.fetchone())
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT XP FROM LEVELXP WHERE LEVELNAME = ?", (current_level+1,))
-        next_level_xp = (await cursor.fetchone())
-
-        if current_level_xp and next_level_xp:
-            xp_to_next_level = int(next_level_xp[0]) - total_xp
-            xp_percentage = (total_xp - int(current_level_xp[0])) / (
-                int(next_level_xp[0]) - int(current_level_xp[0])) * 100
-        else:
-            xp_to_next_level = 0
-            xp_percentage = 100
-
-        # Erstelle ein Embed
-        embed = disnake.Embed(
-            title=f"Profil von {user.name}", color=disnake.Color.blue())
-        embed.set_author(name=self.bot.user.name,
-                         icon_url=inter.guild.icon.url)
-        embed.set_thumbnail(
-            url=user.avatar.url if inter.user.avatar else inter.user.default_avatar.url)
-
-        # Füge Benutzerinformationen hinzu
-        current_time = (await self.globalfile.get_current_time()).strftime('%H:%M:%S')
-        embed.set_footer(
-            text=f"ID: {user_info[1]} | {user_info[0]} - heute um {current_time} Uhr")
-
-        # Füge Nachrichtenzähler und Voice-Aktivität hinzu
-        embed.add_field(name="📨 **Nachrichten**",
-                        value=f"{message_count} Nachrichten", inline=False)
-        embed.add_field(name="🎙️ **Voice-Aktivität**",
-                        value=f"{int(voice_minutes//2)} Minuten", inline=False)
-
-        # Füge XP und Level hinzu
-        embed.add_field(name="✨ **Level**", value=(
-                        f"Aktuelle Level: {current_level}\n"
-                        f"XP: {int(total_xp//10)} XP\n"
-                        f"XP bis zum nächsten Level: {int(xp_to_next_level//10)} XP ({xp_percentage:.2f}%)"
-                        ), inline=False)
-
-        # Füge detaillierte XP-Informationen hinzu
-        embed.add_field(name="📊 **XP Details**", value=(
-                        f"Nachrichten XP: {int(message_xp//10)} XP\n"
-                        f"Voice XP: {int(voice_xp//10)} XP\n"
-                        f"Invite XP: {int(invite_xp//10)} XP\n"
-                        f"Bonus XP: {int(bonus_xp//10)} XP"
-                        ), inline=False)
-
-        # Füge Geburtsdatum hinzu, falls vorhanden
-        if user_info[6]:
-            embed.add_field(name="🎂 **Geburtstag**",
-                            value=user_info[6], inline=False)
-
-        warn_level = user_info[3]
-        warnlevel_adjusted = user_info[8]
-
-        # Berechne das Datum, wann das nächste Warnlevel entfernt wird
-        if warnlevel_adjusted:
-            last_warn_date = datetime.strptime(
-                warnlevel_adjusted, '%Y-%m-%d %H:%M:%S')
-        else:
-            # Hole das Datum des letzten Warns
-            cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT MAX(INSERT_DATE) FROM WARN WHERE USERID = ? AND REMOVED <> 1", (userrecord['ID'],))
-            last_warn_date = (await cursor.fetchone())[0]
-            if last_warn_date:
-                last_warn_date = datetime.strptime(
-                    last_warn_date, '%Y-%m-%d %H:%M:%S')
-            else:
-                last_warn_date = None
-
-        if last_warn_date:
-            next_warnlevel_removal = last_warn_date + \
-                timedelta(days=4*30)  # 4 months later
-            next_warnlevel_removal_str = next_warnlevel_removal.strftime(
-                '%Y-%m-%d %H:%M:%S')
-        else:
-            next_warnlevel_removal_str = "N/A"
-
-        embed.add_field(name="⚠️ **Warnlevel**",
-                        value=f"Aktuelles Warnlevel: {warn_level}\nNächstes Warnlevel-Entfernung: {next_warnlevel_removal_str}", inline=False)
-        # Füge Notizen hinzu
-        if notes:
-            for note in notes:
-                caseid = note[0]
-                reason = note[2]
-                image_path = note[3]
-                # Annahme: Das Erstellungsdatum ist das fünfte Element im Tupel
-                created_at = note[4]
-                note_text = f"Grund: {reason}\nErstellt am: {created_at}"
-                if image_path:
-                    note_text += f"\nBildpfad: {image_path}"
-                embed.add_field(
-                    name=f"Note [ID: {caseid}]", value=note_text, inline=False)
-                if image_path and os.path.exists(image_path):
-                    embed.set_image(file=disnake.File(image_path))
-        else:
-            embed.add_field(
-                name="Notizen", value="Keine Notizen vorhanden.", inline=False)
-
-        if warns:
-            for warn in warns:
-                caseid = warn[0]
-                reason = warn[2]
-                level = warn[4]
-                created_at = warn[5]
-                image_path = warn[3]
-                warn_text = f"Grund: {reason}\nLevel: {level}\nErstellt am: {created_at}"
-                if image_path:
-                    note_text += f"\nBildpfad: {image_path}"
-                embed.add_field(
-                    name=f"Warnung [ID: {caseid}]", value=warn_text, inline=False)
-                if image_path and os.path.exists(image_path):
-                    embed.set_image(file=disnake.File(image_path))
-        else:
-            embed.add_field(name="Warnungen",
-                            value="Keine Warnungen vorhanden.", inline=False)
-
-        await inter.edit_original_response(embed=embed)
+            self.logger.critical(f"An error occurred: {e}")    
 
     @exception_handler
     async def _disconnect(self, inter: disnake.ApplicationCommandInteraction):
@@ -521,12 +359,12 @@ class Tmp(commands.Cog):
 
         for member in members:
             # Überprüfen, ob der Benutzer bereits in der Tabelle Users existiert
-            cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT ID, USERNAME FROM USER WHERE DISCORDID = ?", (str(member.id),))
+            cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "SELECT ID, USERNAME FROM USER WHERE DISCORDID = ?", (str(member.id),))
             result = (await cursor.fetchone())
 
             if not result:
                 # Benutzer existiert nicht, füge ihn in die Tabelle Users ein
-                await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "INSERT INTO USER (DISCORDID, USERNAME) VALUES (?, ?)", (str(member.id), member.name))
+                await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "INSERT INTO USER (DISCORDID, USERNAME) VALUES (?, ?)", (str(member.id), member.name))
 
                 synced_count += 1
             else:
@@ -534,7 +372,7 @@ class Tmp(commands.Cog):
                 user_id, db_username = result
                 if db_username != member.name:
                     # Benutzername ist nicht korrekt, aktualisiere ihn
-                    cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "UPDATE USER SET USERNAME = ? WHERE ID = ?", (member.name, user_id))
+                    cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "UPDATE USER SET USERNAME = ? WHERE ID = ?", (member.name, user_id))
 
                     synced_count += 1
 
@@ -605,6 +443,7 @@ class Tmp(commands.Cog):
         guild = inter.guild
         cutoff_date = (await self.globalfile.get_current_time()) - timedelta(days=days)
         active_users = set()
+        channelid = channel.id
 
         if not role:
             await inter.edit_original_response(content="Die angegebene Rolle existiert nicht.")
@@ -626,6 +465,7 @@ class Tmp(commands.Cog):
             await member.add_roles(role, reason=f"Inaktiv für {days} Tage")
 
         # Pinge die Rolle im angegebenen Kanal
+        channel = await inter.guild.fetch_channel(channelid)
         await channel.send(f"{role.mention} Bitte schreibt mal wieder etwas, sonst gibt es Stress! Danke❤️")
 
         await inter.edit_original_response(content=f"Rolle wurde an {len(inactive_users)} inaktive Benutzer vergeben und Nachricht wurde gesendet.")
@@ -922,9 +762,9 @@ class Tmp(commands.Cog):
         """Verifiziert einen Benutzer und gibt ihm die Rolle 'Verified'."""
         await inter.response.defer()
 
-        userrecord = await self.globalfile.get_user_record(discordid=user.id)
+        userrecord = await self.globalfile.get_user_record(guild=inter.guild, discordid=user.id)
 
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "UPDATE USER SET verified = 1 WHERE ID = ?", (userrecord['ID'],))
+        cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "UPDATE USER SET verified = 1 WHERE ID = ?", (userrecord['ID'],))
 
         if self.verified_role:
             await user.add_roles(self.verified_role)
@@ -948,11 +788,11 @@ class Tmp(commands.Cog):
             return
 
         # Hole die Benutzerinformationen aus der Tabelle User
-        userrecord = await self.globalfile.get_user_record(discordid=user.id)
+        userrecord = await self.globalfile.get_user_record(guild=inter.guild, discordid=user.id)
 
         # Hole den aktuellen Bildpfad
 
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT imagepath FROM USER WHERE ID = ?", (userrecord['ID'],))
+        cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "SELECT imagepath FROM USER WHERE ID = ?", (userrecord['ID'],))
         current_imagepath = (await cursor.fetchone())[0]
 
         # Bestimme den neuen Bildpfad
@@ -967,7 +807,7 @@ class Tmp(commands.Cog):
             updated_imagepath = new_image_path
 
         # Aktualisiere den Bildpfad in der Datenbank
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "UPDATE USER SET imagepath = ? WHERE ID = ?", (updated_imagepath, userrecord['ID']))
+        cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "UPDATE USER SET imagepath = ? WHERE ID = ?", (updated_imagepath, userrecord['ID']))
 
         self.logger.info(
             f"A new image was added for User {user.name} (ID: {user.id}) by {inter.user.name} (ID: {inter.user.id}).")
@@ -1001,9 +841,9 @@ class Tmp(commands.Cog):
             return
 
         # Update the user's birthday in the database
-        userrecord = await self.globalfile.get_user_record(discordid=inter.user.id)
+        userrecord = await self.globalfile.get_user_record(guild=inter.guild, discordid=inter.user.id)
 
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "UPDATE USER SET BIRTHDAY = ? WHERE ID = ?", (birthday_date, userrecord['ID']))
+        cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "UPDATE USER SET BIRTHDAY = ? WHERE ID = ?", (birthday_date, userrecord['ID']))
 
         # Calculate the days until the next birthday
         today = date.today()
@@ -1022,172 +862,6 @@ class Tmp(commands.Cog):
                         value=f"In **{days_until_birthday}** Tagen", inline=False)
         self.logger.info(
             f"User {inter.user.name} (ID: {inter.user.id}) has set their birthday to {birthday_date}.")
-
-        await inter.edit_original_response(embed=embed)
-
-    @exception_handler
-    async def _me(self, inter: disnake.ApplicationCommandInteraction):
-        """Zeigt dein eigenes Profil an, einschließlich Notizen und Warnungen."""
-        await inter.response.defer(ephemeral=True)
-
-        userrecord = await self.globalfile.get_user_record(discordid=inter.user.id)
-
-        # Hole die Benutzerinformationen aus der Tabelle User
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT * FROM USER WHERE ID = ?", (userrecord['ID'],))
-        user_info = (await cursor.fetchone())
-
-        if not user_info:
-            await inter.edit_original_response(content=f"Keine Informationen für Benutzer {inter.user.mention} gefunden.")
-            return
-
-        # Hole alle Notizen des Benutzers aus der Tabelle Note
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT * FROM NOTE WHERE USERID = ? AND REMOVED <> 1", (userrecord['ID'],))
-        notes = await cursor.fetchall()
-        # Hole alle Warnungen des Benutzers aus der Tabelle Warn
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT * FROM WARN WHERE USERID = ? AND REMOVED <> 1", (userrecord['ID'],))
-        warns = await cursor.fetchall()
-        # Hole die Anzahl der geschriebenen Nachrichten
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT COUNT(*) FROM MESSAGE WHERE USERID = ?", (userrecord['ID'],))
-        message_count = ((await cursor.fetchone()))[0]
-
-        # Hole die Minuten der bisherigen Voice-Aktivität
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT SUM(VOICE) FROM VOICE_XP WHERE USERID = ?", (userrecord['ID'],))
-        voice_minutes = (await cursor.fetchone())[0] or 0
-
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT SUM(COUNT) FROM INVITE_XP WHERE USERID = ?", (userrecord['ID'],))
-        invites = (await cursor.fetchone())[0] or 0
-
-        # Hole die XP und das Level des Benutzers
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT (MESSAGE + VOICE + INVITE + BONUS) AS TOTAL_XP, LEVEL, MESSAGE, VOICE, INVITE, BONUS FROM EXPERIENCE WHERE USERID = ?", (userrecord['ID'],))
-        xp_info = (await cursor.fetchone())
-        total_xp = xp_info[0]
-        current_level = xp_info[1]
-        message_xp = xp_info[2]
-        voice_xp = xp_info[3]
-        invite_xp = xp_info[4]
-        bonus_xp = xp_info[5]
-
-        # Berechne die XP für das nächste Level
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT XP FROM LEVELXP WHERE LEVELNAME = ?", (current_level,))
-        current_level_xp = (await cursor.fetchone())
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT XP FROM LEVELXP WHERE LEVELNAME = ?", (current_level+1,))
-        next_level_xp = (await cursor.fetchone())
-
-        if current_level_xp and next_level_xp:
-            current_level_xp_value = int(current_level_xp[0])
-            next_level_xp_value = int(next_level_xp[0])
-            xp_to_next_level = next_level_xp_value - total_xp
-            value1 = (total_xp - current_level_xp_value)
-            value2 = (next_level_xp_value - current_level_xp_value)
-            xp_percentage = (value1 / value2) * 100
-        else:
-            xp_to_next_level = 0
-            xp_percentage = 100
-
-        # Erstelle ein Embed
-        embed = disnake.Embed(
-            title=f"Profil von {inter.user.name}", color=disnake.Color.blue())
-        embed.set_author(name=self.bot.user.name,
-                         icon_url=inter.guild.icon.url)
-        embed.set_thumbnail(
-            url=inter.user.avatar.url if inter.user.avatar else inter.user.default_avatar.url)
-
-        # Füge Benutzerinformationen hinzu
-        current_time = (await self.globalfile.get_current_time()).strftime('%H:%M:%S')
-        embed.set_footer(
-            text=f"ID: {user_info[1]} | {user_info[0]} - heute um {current_time} Uhr")
-
-        # Füge Nachrichtenzähler und Voice-Aktivität hinzu
-        embed.add_field(name="✍️ **Nachrichten**",
-                        value=f"{message_count} Nachrichten", inline=False)
-        embed.add_field(name="🎙️ **Voice-Aktivität**",
-                        value=f"{int(voice_minutes//2)} Minuten", inline=False)
-        embed.add_field(name="📩 **Einladungen**",
-                        value=f"{invites} Einladungen", inline=False)
-
-        # Füge XP und Level hinzu
-        embed.add_field(name="✨ **Level**", value=(
-                        f"Aktuelle Level: {current_level}\n"
-                        f"XP: {int(total_xp//10)} XP\n"
-                        f"XP bis zum nächsten Level: {int(xp_to_next_level//10)} XP ({xp_percentage:.2f}%)"
-                        ), inline=False)
-
-        # Füge detaillierte XP-Informationen hinzu
-        embed.add_field(name="📊 **XP Details**", value=(
-                        f"Nachrichten XP: {int(message_xp//10)} XP\n"
-                        f"Voice XP: {int(voice_xp//10)} XP\n"
-                        f"Invite XP: {int(invite_xp//10)} XP\n"
-                        f"Bonus XP: {int(bonus_xp//10)} XP"
-                        ), inline=False)
-
-        # Füge Geburtsdatum hinzu, falls vorhanden
-        if user_info[6]:
-            embed.add_field(name="🎂 **Geburtstag**",
-                            value=user_info[6], inline=False)
-
-        warn_level = user_info[3]
-        warnlevel_adjusted = user_info[8]
-
-        # Berechne das Datum, wann das nächste Warnlevel entfernt wird
-        if warnlevel_adjusted:
-            last_warn_date = datetime.strptime(
-                warnlevel_adjusted, '%Y-%m-%d %H:%M:%S')
-        else:
-            # Hole das Datum des letzten Warns
-            cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT MAX(INSERT_DATE) FROM WARN WHERE USERID = ? AND REMOVED <> 1", (userrecord['ID'],))
-            last_warn_date = (await cursor.fetchone())[0]
-            if last_warn_date:
-                last_warn_date = datetime.strptime(
-                    last_warn_date, '%Y-%m-%d %H:%M:%S')
-            else:
-                last_warn_date = None
-
-        if last_warn_date:
-            next_warnlevel_removal = last_warn_date + \
-                timedelta(days=4*30)  # 4 months later
-            next_warnlevel_removal_str = next_warnlevel_removal.strftime(
-                '%Y-%m-%d %H:%M:%S')
-        else:
-            next_warnlevel_removal_str = "N/A"
-
-        embed.add_field(name="⚠️ **Warnlevel**",
-                        value=f"Aktuelles Warnlevel: {warn_level}\nNächstes Warnlevel-Entfernung: {next_warnlevel_removal_str}", inline=False)
-        # Füge Notizen hinzu
-        if notes:
-            for note in notes:
-                caseid = note[0]
-                reason = note[2]
-                image_path = note[3]
-                # Annahme: Das Erstellungsdatum ist das fünfte Element im Tupel
-                created_at = note[4]
-                note_text = f"Grund: {reason}\nErstellt am: {created_at}"
-                if image_path:
-                    note_text += f"\nBildpfad: {image_path}"
-                embed.add_field(
-                    name=f"Note [ID: {caseid}]", value=note_text, inline=False)
-                if image_path and os.path.exists(image_path):
-                    embed.set_image(file=disnake.File(image_path))
-        else:
-            embed.add_field(
-                name="Notizen", value="Keine Notizen vorhanden.", inline=False)
-
-        if warns:
-            for warn in warns:
-                caseid = warn[0]
-                reason = warn[2]
-                level = warn[4]
-                created_at = warn[5]
-                image_path = warn[3]
-                warn_text = f"Grund: {reason}\nLevel: {level}\nErstellt am: {created_at}"
-                if image_path:
-                    note_text += f"\nBildpfad: {image_path}"
-                embed.add_field(
-                    name=f"Warnung [ID: {caseid}]", value=warn_text, inline=False)
-                if image_path and os.path.exists(image_path):
-                    embed.set_image(file=disnake.File(image_path))
-        else:
-            embed.add_field(name="Warnungen",
-                            value="Keine Warnungen vorhanden.", inline=False)
 
         await inter.edit_original_response(embed=embed)
 
@@ -1212,18 +886,18 @@ class Tmp(commands.Cog):
                         "MESSAGE_WORTH_PER_VOICEMIN", str(value))
 
             # Aktualisiere die EXPERIENCE Tabelle
-            cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT USERID FROM EXPERIENCE")
+            cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "SELECT USERID FROM EXPERIENCE")
             experience_data = await cursor.fetchall()
             for user_id in experience_data:
                 user_id = user_id[0]
-                cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT SUM(MESSAGE) FROM MESSAGE_XP WHERE USERID = ?", (user_id,))
+                cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "SELECT SUM(MESSAGE) FROM MESSAGE_XP WHERE USERID = ?", (user_id,))
                 total_message_xp = (await cursor.fetchone())[0] or 0
-                cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT SUM(VOICE) FROM VOICE_XP WHERE USERID = ?", (user_id,))
+                cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "SELECT SUM(VOICE) FROM VOICE_XP WHERE USERID = ?", (user_id,))
                 total_voice_xp = (await cursor.fetchone())[0] or 0
 
                 new_message_xp = total_message_xp * self.factor
                 new_voice_xp = total_voice_xp * self.message_worth_per_voicemin * self.factor
-                cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "UPDATE EXPERIENCE SET MESSAGE = ?, VOICE = ? WHERE USERID = ?", (new_message_xp, new_voice_xp, user_id))
+                cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "UPDATE EXPERIENCE SET MESSAGE = ?, VOICE = ? WHERE USERID = ?", (new_message_xp, new_voice_xp, user_id))
 
             inter.channel.send(
                 f"Der Faktor wurde auf {value}% gesetzt und die EXPERIENCE Tabelle wurde aktualisiert.")
@@ -1315,23 +989,22 @@ class Tmp(commands.Cog):
 
         # Aktualisiere die Datenbank
 
-        userrecord = await self.globalfile.get_user_record(discordid=second_user.id)
+        userrecord = await self.globalfile.get_user_record(guild=inter.guild, discordid=second_user.id)
         # Setze SECONDACC_USERID im Hauptaccount
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "UPDATE USER SET SECONDACC_USERID = ? WHERE DISCORDID = ?", (userrecord['ID'], main_user.id))
+        cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "UPDATE USER SET SECONDACC_USERID = ? WHERE DISCORDID = ?", (userrecord['ID'], main_user.id))
 
         # Setze XP und Level des Zweitaccounts auf 0 und 1
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "UPDATE EXPERIENCE SET MESSAGE = 0, VOICE = 0, LEVEL = 1, INVITE = 0 WHERE USERID = (SELECT ID FROM USER WHERE DISCORDID = ?)", (second_user.id,))
+        cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "UPDATE EXPERIENCE SET MESSAGE = 0, VOICE = 0, LEVEL = 1, INVITE = 0 WHERE USERID = (SELECT ID FROM USER WHERE DISCORDID = ?)", (second_user.id,))
 
         # Entferne alle Levelrollen vom Zweitaccount
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT ROLE_ID FROM LEVELXP")
+        cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "SELECT ROLE_ID FROM LEVELXP")
         level_roles_ids = [row[0] for row in cursor.fetchall()]
         level_roles = [
             role for role in second_member.roles if role.id in level_roles_ids]
         for role in level_roles:
             await second_member.remove_roles(role)
 
-        await inter.edit_original_response(content=f"Zweitaccount-Rolle wurde {second_user.mention} hinzugefügt und Datenbank aktualisiert.")
-
+        await inter.edit_original_response(content=f"Zweitaccount-Rolle wurde {second_user.mention} hinzugefügt und Datenbank aktualisiert.")        
 
 def setupTmp(bot: commands.Bot, rolemanager: RoleManager):
     bot.add_cog(Tmp(bot, rolemanager))

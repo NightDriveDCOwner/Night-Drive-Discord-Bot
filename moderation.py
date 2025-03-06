@@ -42,11 +42,13 @@ class Moderation(commands.Cog):
             self.logger.addHandler(handler)
 
     @commands.Cog.listener()
-    async def on_ready(self):
-        self.logger.debug("Bot is ready.")
-        await self.sync_team_members()
+    async def on_ready(self):     
+        for guild in self.bot.guilds:
+            await self.sync_team_members(guild)  
         self.mod_channel = self.bot.guilds[0].get_channel(
             1090588808216596490)  # Set the channel ID
+        self.logger.info("Moderation Cog is ready.")
+        
 
     @exception_handler
     def add_user_to_badwords_times(user_id: int):
@@ -92,7 +94,7 @@ class Moderation(commands.Cog):
             current_time = (await self.globalfile.get_current_time()).strftime('%H:%M:%S')
 
             # Fetch all blacklist words from the database
-            cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT ID, WORD, LEVEL FROM BLACKLIST")
+            cursor = await DatabaseConnectionManager.execute_sql_statement(message.guild.id, message.guild.name, "SELECT ID, WORD, LEVEL FROM BLACKLIST")
             blacklist_words = await cursor.fetchall()
             # Split the message content into individual words
             words_in_message = re.findall(r'\w+', content)
@@ -106,12 +108,12 @@ class Moderation(commands.Cog):
                             f"Nachricht von {message.author.name} (ID: {user_id}) gelöscht wegen Blacklist-Verstoß: {word}")
 
                         # Insert the blacklist case into the database
-                        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, """
+                        cursor = await DatabaseConnectionManager.execute_sql_statement(message.guild.id, message.guild.name, """
                             INSERT INTO BLACKLIST_CASSED (USERID, BLACKLISTID, INSERT_DATE)
                             VALUES (?, ?, ?)
                         """, (user_id, id, current_datetime))
 
-                        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, """
+                        cursor = await DatabaseConnectionManager.execute_sql_statement(message.guild.id, message.guild.name, """
                             SELECT SUM(BL.LEVEL)
                             FROM BLACKLIST_CASSED BC
                             JOIN BLACKLIST BL ON BC.BLACKLISTID = BL.ID
@@ -136,7 +138,7 @@ class Moderation(commands.Cog):
                         # Check if the user should be warned
                         current_datetime_obj = datetime.strptime(
                             current_datetime, '%Y-%m-%d %H:%M:%S')
-                        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, """
+                        cursor = await DatabaseConnectionManager.execute_sql_statement(message.guild.id, message.guild.name, """
                             SELECT SUM(BL.LEVEL)
                             FROM BLACKLIST_CASSED BC
                             JOIN BLACKLIST BL ON BC.BLACKLISTID = BL.ID
@@ -190,7 +192,7 @@ class Moderation(commands.Cog):
 
             # Speichere den Timeout in der Datenbank
             current_datetime = (await self.globalfile.get_current_time()).strftime('%Y-%m-%d %H:%M:%S')
-            await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "INSERT INTO TIMEOUT (USERID, REASON, TIMEOUTTO, INSERT_DATE) VALUES (?, ?, ?, ?)", (member.id, reason, timeout_end_time.strftime('%Y-%m-%d %H:%M:%S'), current_datetime))
+            await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "INSERT INTO TIMEOUT (USERID, REASON, TIMEOUTTO, INSERT_DATE) VALUES (?, ?, ?, ?)", (member.id, reason, timeout_end_time.strftime('%Y-%m-%d %H:%M:%S'), current_datetime))
 
         except disnake.Forbidden:
             await inter.edit_original_response(content=f"Ich habe keine Berechtigung, {member.mention} zu timeouten.")
@@ -218,7 +220,7 @@ class Moderation(commands.Cog):
         """Entfernt einen Timeout basierend auf der Timeout ID."""
         await inter.response.defer(ephemeral=True)
 
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT * FROM TIMEOUT WHERE ID = ?", (timeout_id,))
+        cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "SELECT * FROM TIMEOUT WHERE ID = ?", (timeout_id,))
         timeout_record = (await cursor.fetchone())
 
         if not timeout_record:
@@ -232,8 +234,8 @@ class Moderation(commands.Cog):
             await user.timeout(duration=None, reason=reason)
             self.logger.info(
                 f"Timeout removed for User {user.name} (ID: {user.id}) by {inter.user.name} (ID: {inter.user.id})")
-            userrecord = await self.globalfile.get_user_record(discordid=inter.author.id)
-            await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "UPDATE TIMEOUT SET REMOVED = 1, REMOVED_BY = ?, REMOVED_REASON = ? WHERE ID = ?", (userrecord['ID'], reason, timeout_id))
+            userrecord = await self.globalfile.get_user_record(guild=inter.guild, discordid=inter.author.id)
+            await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "UPDATE TIMEOUT SET REMOVED = 1, REMOVED_BY = ?, REMOVED_REASON = ? WHERE ID = ?", (userrecord['ID'], reason, timeout_id))
 
             embed = disnake.Embed(
                 title="Timeout entfernt", description=f"Der Timeout für {user.mention} wurde erfolgreich entfernt.", color=disnake.Color.green())
@@ -265,16 +267,16 @@ class Moderation(commands.Cog):
         if proof:
             image_path = await Globalfile.save_image(proof, f"{user.id}")
 
-        userrecord = await self.globalfile.get_user_record(discordid=user.id)
+        userrecord = await self.globalfile.get_user_record(guild=inter.guild, discordid=user.id)
 
         current_datetime = (await self.globalfile.get_current_time()).strftime('%Y-%m-%d %H:%M:%S')
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "INSERT INTO WARN (USERID, REASON, IMAGEPATH, LEVEL, INSERT_DATE) VALUES (?, ?, ?, ?, ?)", (userrecord['ID'], reason, image_path, level, current_datetime))
+        cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "INSERT INTO WARN (USERID, REASON, IMAGEPATH, LEVEL, INSERT_DATE) VALUES (?, ?, ?, ?, ?)", (userrecord['ID'], reason, image_path, level, current_datetime))
 
         # Hole die zuletzt eingefügte ID
         caseid = cursor.lastrowid
 
         # Aktualisiere das Warnlevel in der User-Tabelle
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "UPDATE USER SET WARNLEVEL = ? WHERE ID = ?", (level, userrecord['ID']))
+        cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "UPDATE USER SET WARNLEVEL = ? WHERE ID = ?", (level, userrecord['ID']))
         self.logger.info(
             f"Warn added to User {userrecord['USERNAME']} : {reason}")
 
@@ -289,6 +291,8 @@ class Moderation(commands.Cog):
             if image_path:
                 user_embed.add_field(
                     name="Bildpfad", value=image_path, inline=False)
+            user_embed.add_field(
+                name="Hinweis", value="Du kannst gegen diese Verwarnung nur per Ticket vorgehen. Eine Verwarnung läuft nach 4 Monaten ab.", inline=False)
             user_embed.set_footer(text=f"ID: {user.id} - heute um {((await self.globalfile.get_current_time()).strftime('%H:%M:%S'))} Uhr")
             await user.send(embed=user_embed)
         except Exception as e:
@@ -309,12 +313,12 @@ class Moderation(commands.Cog):
             await inter.edit_original_response(content=f"Warnung erfolgreich erstellt. Logged in: {self.mod_channel.mention}")
 
     @exception_handler
-    async def _warn_delete(self, inter: disnake.ApplicationCommandInteraction, caseid: int):
+    async def _warn_delete(self, inter: disnake.ApplicationCommandInteraction, caseid: int, reason: str):
         """Löscht eine Warn basierend auf der Warn ID und setzt das Warnlevel zurück."""
         await inter.response.defer(ephemeral=True)
         try:
 
-            cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT * FROM WARN WHERE ID = ?", (caseid,))
+            cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "SELECT * FROM WARN WHERE ID = ?", (caseid,))
             warn = (await cursor.fetchone())
 
             if warn is None:
@@ -323,26 +327,39 @@ class Moderation(commands.Cog):
                 await inter.edit_original_response(embed=embed)
                 self.logger.info(f"Warn not found: {caseid}")
                 return
+            
+            if warn[6]:
+                await inter.edit_original_response(content=f"Warnung mit der ID {caseid} wurde bereits gelöscht.")
+                return
 
+            user_record = await self.globalfile.get_user_record(guild=inter.guild, discordid=inter.author.id)
             # Assuming USERID is the second column in WARN table
             user_id = warn[1]
             # Assuming LEVEL is the fifth column in WARN table
             warn_level = warn[4]
 
             # Reduziere das Warnlevel des Benutzers
-            cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT WARNLEVEL FROM USER WHERE ID = ?", (user_id,))
+            cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "SELECT WARNLEVEL FROM USER WHERE ID = ?", (user_id,))
             current_warn_level = (await cursor.fetchone())[0]
             new_warn_level = max(0, current_warn_level - warn_level)
-            cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "UPDATE USER SET WARNLEVEL = ? WHERE ID = ?", (new_warn_level, user_id))
+            cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "UPDATE USER SET WARNLEVEL = ? WHERE ID = ?", (new_warn_level, user_id))
 
             # Lösche die Warnung
-            cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "UPDATE WARN SET REMOVED = 1 WHERE ID = ?", (caseid,))
+            cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "UPDATE WARN SET REMOVED = 1, REMOVED_BY = ?, REMOVED_REASON = ? WHERE ID = ?", (user_record['ID'], reason, caseid))
             embed = disnake.Embed(
                 title="Warn gelöscht", description=f"Warn mit der ID {caseid} wurde gelöscht und das Warnlevel wurde angepasst.", color=disnake.Color.green())
             self.logger.info(
                 f"Warn deleted: {caseid}, Warnlevel adjusted for user {user_id} to {new_warn_level} by {inter.author.name} (ID: {inter.author.id}).")
             await self.mod_channel.send(embed=embed)
             await inter.edit_original_response(content=f"Warnung erfolgreich gelöscht. Logged in: {self.mod_channel.mention}")
+            user_record = await self.globalfile.get_user_record(guild=inter.guild, user_id=user_id)
+            user = await self.bot.fetch_user(int(user_record['DISCORDID']))
+            dm_embed = disnake.Embed(
+                title="Warnung entfernt",
+                description=f"Deine Warnung mit der ID {caseid} wurde entfernt und dein Warnlevel wurde angepasst.",
+                color=disnake.Color.green()
+            )
+            await user.send(embed=dm_embed)
         except sqlite3.Error as e:
             embed = disnake.Embed(
                 title="Fehler", description=f"Ein Fehler ist aufgetreten: {e}", color=disnake.Color.red())
@@ -376,9 +393,9 @@ class Moderation(commands.Cog):
                 ban_end_timestamp = None
                 ban_end_formatted = "Unbestimmt"
 
-            userrecord = await self.globalfile.get_user_record(discordid=member.id)
+            userrecord = await self.globalfile.get_user_record(guild=inter.guild, discordid=member.id)
 
-            cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT * FROM BAN WHERE USERID = ?", (userrecord['ID'],))
+            cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "SELECT * FROM BAN WHERE USERID = ?", (userrecord['ID'],))
             bans = await cursor.fetchall()
             ban_found = False
             for ban in bans:
@@ -424,9 +441,9 @@ class Moderation(commands.Cog):
                         else:
                             image_path = await self.globalfile.save_image(proof, f"{member.id}_{duration_seconds}")
 
-                    userrecord = await self.globalfile.get_user_record(discordid=inter.user.id)
+                    userrecord = await self.globalfile.get_user_record(guild=inter.guild, discordid=inter.user.id)
                     user_id = userrecord['ID']
-                    userrecord = await self.globalfile.get_user_record(discordid=member.id)
+                    userrecord = await self.globalfile.get_user_record(guild=inter.guild, discordid=member.id)
                     current_datetime = (await self.globalfile.get_current_time()).strftime('%Y-%m-%d %H:%M:%S')
                     cursor.execute(
                         "INSERT INTO BAN (USERID, REASON, BANNED_TO, DELETED_DAYS, IMAGEPATH, INSERT_DATE, BANNED_BY) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -475,12 +492,12 @@ class Moderation(commands.Cog):
         """Entbanne einen Benutzer von diesem Server."""
         await inter.response.defer(ephemeral=True)  # Verzögere die Interaktion und mache sie nur für den Benutzer sichtbar
         try:
-            userrecord = await self.globalfile.get_user_record(user_id=userid, username=username)
+            userrecord = await self.globalfile.get_user_record(guild=inter.guild, user_id=userid, username=username)
             user = await self.bot.fetch_user(int(userrecord['DISCORDID']))
 
             # Überprüfen, ob ein offener Ban existiert
 
-            cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT * FROM BAN WHERE USERID = ?", (str(userrecord['ID']),))
+            cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "SELECT * FROM BAN WHERE USERID = ?", (str(userrecord['ID']),))
             bans = await cursor.fetchall()
             ban_found = False
             for ban in bans:
@@ -494,8 +511,8 @@ class Moderation(commands.Cog):
             else:
                 guild = inter.guild
                 await guild.unban(user)
-                teamuser_record = await self.globalfile.get_user_record(discordid=inter.author.id)
-                cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "UPDATE BAN SET UNBANNED = 1, UNBANNED_BY = ?, UNBANNED_REASON = ? WHERE USERID = ? AND UNBANNED = 0", (teamuser_record['ID'], reason, str(userrecord['ID'])))
+                teamuser_record = await self.globalfile.get_user_record(guild=inter.guild, discordid=inter.author.id)
+                cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "UPDATE BAN SET UNBANNED = 1, UNBANNED_BY = ?, UNBANNED_REASON = ? WHERE USERID = ? AND UNBANNED = 0", (teamuser_record['ID'], reason, str(userrecord['ID'])))
 
                 embed = disnake.Embed(
                     title="Benutzer entbannt", description=f"{user.mention} wurde erfolgreich entbannt!", color=disnake.Color.green())
@@ -537,7 +554,7 @@ class Moderation(commands.Cog):
             if proof:
                 image_path = await self.globalfile.save_image(proof, f"{member.id}_kick")
 
-            cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name,
+            cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name,
                                                                            "INSERT INTO KICK (USERID, REASON, IMAGEPATH) VALUES (?, ?, ?)",
                                                                            (member.id, reason,
                                                                             image_path)
@@ -621,9 +638,9 @@ class Moderation(commands.Cog):
             # Aktualisiere die Datenbank für hinzugefügte Rollen
             for role_id in added_roles:
                 role_name = self.rolemanager.get_role_name(
-                    self.bot.guilds[0].id, role_id)
+                    after.guild.id, role_id)
                 if role_name and role_name in self.team_roles:
-                    await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, """
+                    await DatabaseConnectionManager.execute_sql_statement(after.guild.id, after.guild.name, """
                         INSERT INTO TEAM_MEMBERS (USERID, ROLE, TEAM_ROLE)
                         VALUES (?, ?, ?)
                         ON CONFLICT(USERID, ROLE) DO UPDATE SET TEAM_ROLE=excluded.TEAM_ROLE
@@ -635,9 +652,9 @@ class Moderation(commands.Cog):
             # Aktualisiere die Datenbank für entfernte Rollen
             for role_id in removed_roles:
                 role_name = self.rolemanager.get_role_name(
-                    self.bot.guilds[0].id, role_id)
+                    after.guild.id, role_id)
                 if role_name and role_name in self.team_roles:
-                    cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, """
+                    cursor = await DatabaseConnectionManager.execute_sql_statement(after.guild.id, after.guild.name, """
                         DELETE FROM TEAM_MEMBERS WHERE USERID = ? AND ROLE = ?
                     """, (after.id, role_name))
 
@@ -645,10 +662,10 @@ class Moderation(commands.Cog):
                         f"Role {role_name} removed from user {after.id} in TEAM_MEMBERS table.")
 
     @exception_handler
-    async def sync_team_members(self):
+    async def sync_team_members(self, guild: disnake.Guild):
         """Synchronize the TEAM_MEMBERS table with the current roles of members."""
         # Fetch all current team members from the database
-        cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT USERID, ROLE FROM TEAM_MEMBERS")
+        cursor = await DatabaseConnectionManager.execute_sql_statement(guild.id, guild.name, "SELECT USERID, ROLE FROM TEAM_MEMBERS")
         db_team_members = await cursor.fetchall()
         # Create a set of current team members from the database
         db_team_members_set = {(user_id, role)
@@ -660,10 +677,10 @@ class Moderation(commands.Cog):
             for member in guild.members:
                 for role in member.roles:
                     role_name = self.rolemanager.get_role_name(
-                        self.bot.guilds[0].id, role.id)
+                        guild.id, role.id)
                     if role_name and role_name in self.team_roles:
                         # Fetch USERID from USER table using get_user_record
-                        user_record = await self.globalfile.get_user_record(discordid=member.id)
+                        user_record = await self.globalfile.get_user_record(guild=guild, discordid=member.id)
                         if user_record:
                             user_id = user_record['ID']
                             server_team_members_set.add((user_id, role_name))
@@ -674,11 +691,11 @@ class Moderation(commands.Cog):
 
         # Add new members to the database
         for user_id, role_name in members_to_add:
-            cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, """
+            cursor = await DatabaseConnectionManager.execute_sql_statement(guild.id, guild.name, """
                 INSERT OR IGNORE INTO TEAM_MEMBERS (USERID, ROLE, TEAM_ROLE)
                 VALUES (?, ?, ?)
             """, (user_id, role_name, True))
-            cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, """
+            cursor = await DatabaseConnectionManager.execute_sql_statement(guild.id, guild.name, """
                 UPDATE TEAM_MEMBERS SET TEAM_ROLE = ? WHERE USERID = ? AND ROLE = ?
             """, (True, user_id, role_name))
 
@@ -687,7 +704,7 @@ class Moderation(commands.Cog):
 
         # Remove members from the database
         for user_id, role_name in members_to_remove:
-            cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, """
+            cursor = await DatabaseConnectionManager.execute_sql_statement(guild.id, guild.name, """
                 DELETE FROM TEAM_MEMBERS WHERE USERID = ? AND ROLE = ?
             """, (user_id, role_name))
 
