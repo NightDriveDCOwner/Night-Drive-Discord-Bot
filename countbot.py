@@ -30,10 +30,11 @@ class Countbot(commands.Cog):
             handler.setFormatter(formatter)
             self.logger.addHandler(handler)
 
-    async def initialize_last_correct_number(self):
+    async def initialize_last_correct_number(self, guild: disnake.Guild):
         await self.bot.wait_until_ready()
-        channel = self.bot.get_channel(self.counting_channel_id)
+        channel : disnake.TextChannel = self.channelmanager.get_channel(guild.id, int(os.getenv("COUNTINGBOT_CHANNEL_ID")))        
         async for message in channel.history(limit=100):
+            message: disnake.Message
             if message.reactions:
                 for reaction in message.reactions:
                     if reaction.emoji == "✅" and reaction.me:
@@ -44,26 +45,27 @@ class Countbot(commands.Cog):
                                 self.last_correct_number = number
                                 self.logger.debug(
                                     f"Last correct number is {self.last_correct_number}")
-                                await self.count_channel.send(
+                                await channel.send(
                                     content=f"Die letzte Zahl war {self.last_correct_number}.")
                                 return
         self.logger.debug("No correct number found in the channel history.")
 
     @commands.Cog.listener()
     async def on_ready(self):
-        self.counting_channel_id = int(os.getenv("COUNTINGBOT_CHANNEL_ID"))
-        self.count_channel: disnake.TextChannel = self.channelmanager.get_channel(
-            self.bot.guilds[0].id, self.counting_channel_id)
-        self.logger.debug(
-            f"Bot is ready. Monitoring channel ID: {self.counting_channel_id}")
-        await self.initialize_last_correct_number()
+        self.logger.debug(f"CountingBot is ready")
+        for guild in self.bot.guilds:
+            await self.initialize_last_correct_number(guild)
+        
 
     @commands.Cog.listener()
-    async def on_message(self, message: disnake.Message):
+    async def on_message(self, message: disnake.Message):        
         if message.author.bot:
             return
-
-        if message.channel.id != self.counting_channel_id:
+        
+        load_dotenv(dotenv_path="envs/settings.env", override=True)
+        countingbot_channel : disnake.TextChannel = self.channelmanager.get_channel(message.guild.id, int(os.getenv("COUNTINGBOT_CHANNEL_ID")))
+        
+        if message.channel.id != countingbot_channel.id:
             return
 
         content = message.content.strip()

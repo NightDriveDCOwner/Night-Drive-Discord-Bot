@@ -17,6 +17,7 @@ from exceptionhandler import exception_handler
 from rolemanager import RoleManager
 import aiosqlite
 from typing import Dict
+from channelmanager import ChannelManager
 
 
 class Globalfile(commands.Cog):
@@ -28,7 +29,7 @@ class Globalfile(commands.Cog):
                 cls, *args, **kwargs)
         return cls._instance
 
-    def __init__(self, bot: commands.Bot, rolemanager: RoleManager):
+    def __init__(self, bot: commands.Bot, rolemanager: RoleManager, channelmanager: ChannelManager):
         if not hasattr(self, 'bot'):
             self.bot = bot
             self.user_data = {}
@@ -37,6 +38,7 @@ class Globalfile(commands.Cog):
                 'UserRecord', ['user', 'username', 'userid'])
 
         self.rolemanager = rolemanager
+        self.channelmanager = channelmanager
         logging_level = os.getenv("LOGGING_LEVEL", "INFO").upper()
         self.logger = logging.getLogger("Globalfile")
         self.logger.setLevel(logging_level)
@@ -58,13 +60,6 @@ class Globalfile(commands.Cog):
             self.check_birthdays.start()
         if not self.archive_old_threads.is_running():
             self.archive_old_threads.start()
-        self.logger.debug(f"{self.__class__.__name__} Cog geladen.")
-        self.logger.debug(
-            f"Check Birthday is running: {self.check_birthdays.is_running()}")
-        self.logger.debug(
-            f"Archive old threads is running: {self.archive_old_threads.is_running()}")
-        self.logger.debug(
-            f"Unban Task is running: {self.unban_task.is_running()}")
         self.logger.info("Globalfile Cog is ready.")
 
     @exception_handler
@@ -129,51 +124,50 @@ class Globalfile(commands.Cog):
         bans = await cursor.fetchall()
         await cursor.close()
         for ban in bans:
-            user_id, ban_end_timestamp, discordid = ban
-            if ban_end_timestamp:
-                try:
-                    # Konvertiere ban_end_timestamp von einem String zu einem Float, falls nötig
-                    ban_end_timestamp = float(ban_end_timestamp)
-                except ValueError:
-                    # Falls es sich um einen String handelt, der kein Timestamp ist, überspringen
-                    self.logger.warning(
-                        f"Ungültiges ban_end_timestamp Format für UserID {user_id}: {ban_end_timestamp}")
-                    continue
-
-                # Konvertiere den Unix-Timestamp in ein datetime-Objekt
-                ban_end_datetime = datetime.fromtimestamp(
-                    ban_end_timestamp, tz=timezone.utc)
-                current_time = await self.get_current_time()
-                if current_time > ban_end_datetime:
-                    # Banndauer ist abgelaufen, Benutzer entbannen
-                    if guild is None:
-                        self.logger.error(
-                            f"Guild mit ID {guild.id} konnte nicht gefunden werden.")
-                        # Debugging: Liste alle Gilden auf, die der Bot geladen hat
-                        self.logger.debug(
-                            f"Geladene Gilden: {[g.id for g in self.bot.guilds]}")
-                        continue
+            if ban[1] != "Unbestimmt":
+                user_id, ban_end_timestamp, discordid = ban
+                if ban_end_timestamp:
                     try:
-                        # Überprüfen, ob der Benutzer tatsächlich gebannt ist
-                        async for ban_entry in guild.bans():
-                            if ban_entry.user.id == int(discordid):
-                                # Unban den Benutzer direkt mit der Benutzer-ID
-                                await guild.unban(disnake.Object(id=int(discordid)))
+                        # Konvertiere ban_end_timestamp von einem String zu einem Float, falls nötig
+                        ban_end_timestamp = float(ban_end_timestamp)
+                    except ValueError:
+                        # Falls es sich um einen String handelt, der kein Timestamp ist, überspringen
+                        continue
+
+                    # Konvertiere den Unix-Timestamp in ein datetime-Objekt
+                    ban_end_datetime = datetime.fromtimestamp(
+                        ban_end_timestamp, tz=timezone.utc)
+                    current_time = await self.get_current_time()
+                    if current_time > ban_end_datetime:
+                        # Banndauer ist abgelaufen, Benutzer entbannen
+                        if guild is None:
+                            self.logger.error(
+                                f"Guild mit ID {guild.id} konnte nicht gefunden werden.")
+                            # Debugging: Liste alle Gilden auf, die der Bot geladen hat
+                            self.logger.debug(
+                                f"Geladene Gilden: {[g.id for g in self.bot.guilds]}")
+                            continue
+                        try:
+                            # Überprüfen, ob der Benutzer tatsächlich gebannt ist
+                            async for ban_entry in guild.bans():
+                                if ban_entry.user.id == int(discordid):
+                                    # Unban den Benutzer direkt mit der Benutzer-ID
+                                    await guild.unban(disnake.Object(id=int(discordid)))
+                                    await DatabaseConnectionManager.execute_sql_statement(guild.id, guild.name, "UPDATE BAN SET UNBANNED = 1 WHERE USERID = ?", (user_id,))
+
+                                    self.logger.info(
+                                        f"User {user_id} mit DiscordID {discordid} wurde automatisch entbannt.")
+                            else:
+                                self.logger.warning(
+                                    f"User {user_id} mit DiscordID {discordid} ist nicht gebannt.")
                                 await DatabaseConnectionManager.execute_sql_statement(guild.id, guild.name, "UPDATE BAN SET UNBANNED = 1 WHERE USERID = ?", (user_id,))
 
-                                self.logger.info(
-                                    f"User {user_id} mit DiscordID {discordid} wurde automatisch entbannt.")
-                        else:
+                        except disnake.NotFound:
                             self.logger.warning(
-                                f"User {user_id} mit DiscordID {discordid} ist nicht gebannt.")
-                            await DatabaseConnectionManager.execute_sql_statement(guild.id, guild.name, "UPDATE BAN SET UNBANNED = 1 WHERE USERID = ?", (user_id,))
-
-                    except disnake.NotFound:
-                        self.logger.warning(
-                            f"User {user_id} mit DiscordID {discordid} konnte nicht gefunden werden.")
-                    except Exception as e:
-                        self.logger.error(
-                            f"Fehler beim Entbannen von User {user_id} mit DiscordID {discordid}: {e}")
+                                f"User {user_id} mit DiscordID {discordid} konnte nicht gefunden werden.")
+                        except Exception as e:
+                            self.logger.error(
+                                f"Fehler beim Entbannen von User {user_id} mit DiscordID {discordid}: {e}")
 
     async def check_warn_levels(self, guild):
         """Überprüft das Warnlevel jedes Benutzers und reduziert es, wenn die letzte Warnung länger als 4 Monate zurückliegt."""
@@ -373,73 +367,97 @@ class Globalfile(commands.Cog):
             raise ValueError("Konnte die aktuelle Zeit nicht abrufen.")
         return current_time
 
-    @tasks.loop(time=time(hour=12, minute=0, second=0, tzinfo=pytz.timezone('Europe/Berlin')))
+    @tasks.loop(minutes=5)
     async def check_birthdays(self):
         """Überprüft täglich um 12 Uhr, ob ein Benutzer Geburtstag hat."""
+        current_time = await self.get_current_time()
+        if current_time.hour == 12 and (current_time.minute == 0 or current_time.minute == 1 or current_time.minute == 2 or current_time.minute == 3 or current_time.minute == 4 or current_time.minute == 5):
+            self.logger.info("Überprüfe Geburtstage...")
+            for guild in self.bot.guilds:
+                today = current_time
+                cursor = await DatabaseConnectionManager.execute_sql_statement(guild.id, guild.name, "SELECT DISCORDID, USERNAME FROM USER WHERE strftime('%m-%d', BIRTHDAY) = ?", (today.strftime('%m-%d'),))
+                birthday_users = await cursor.fetchall()
+                if birthday_users:
+                    if guild:
+                        for user in birthday_users:
+                            discord_id, username = user
+                            member = guild.get_member(int(discord_id))
+                            if member:
+                                # Server Embed
+                                server_embed = disnake.Embed(
+                                    title="🎉 Herzlichen Glückwunsch zum Geburtstag!",
+                                    description=f"{member.name} hat heute Geburtstag! 🎂",
+                                    color=disnake.Color.green()
+                                )
+                                server_embed.set_thumbnail(
+                                    url=member.avatar.url if member.avatar else member.default_avatar.url)
+                                server_embed.set_author(
+                                    name=guild.name, icon_url=guild.icon.url if guild.icon else None)
+                                server_embed.add_field(
+                                    name="🎁 Geschenk", value="Du erhältst heute doppelte EP!", inline=False)
+                                server_embed.set_footer(
+                                    text="Wir wünschen dir einen tollen Tag!")
 
-        # Hole das Datum
-        for guild in self.bot.guilds:
-            today = await self.get_current_time()
-            cursor = await DatabaseConnectionManager.execute_sql_statement(guild.id, guild.name, "SELECT DISCORDID, USERNAME FROM USER WHERE strftime('%m-%d', BIRTHDAY) = ?", (today.strftime('%m-%d'),))
-            birthday_users = await cursor.fetchall()
-            if birthday_users:
-                # Ersetzen Sie dies durch die tatsächliche ID Ihres Servers
-                if guild:
-                    for user in birthday_users:
-                        discord_id, username = user
-                        member = guild.get_member(int(discord_id))
-                        if member:
-                            # Server Embed
-                            server_embed = disnake.Embed(
-                                title="🎉 Herzlichen Glückwunsch zum Geburtstag!",
-                                description=f"{member.mention} hat heute Geburtstag! 🎂",
-                                color=disnake.Color.green()
-                            )
-                            server_embed.set_thumbnail(
-                                url=member.avatar.url if member.avatar else member.default_avatar.url)
-                            server_embed.set_author(
-                                name=guild.name, icon_url=guild.icon.url if guild.icon else None)
-                            server_embed.add_field(
-                                name="🎁 Geschenk", value="Du erhältst heute doppelte EP!", inline=False)
-                            server_embed.set_footer(
-                                text="Wir wünschen dir einen tollen Tag!")
+                                # Sende die Nachricht im Server
+                                main_channel = self.channelmanager.get_channel(guild.id, int(os.getenv('MAIN_CHANNEL_ID')))
+                                if main_channel:
+                                    await main_channel.send(content=f"||{member.mention}||", embed=server_embed)
+                                else:
+                                    self.logger.warning(f"Kanal mit der ID {os.getenv('MAIN_CHANNEL_ID')} wurde nicht gefunden.")
+                                
+                                # DM Embed
+                                dm_embed = disnake.Embed(
+                                    title="🎉 Alles Gute zum Geburtstag!",
+                                    description=f"Lieber {username},",
+                                    color=disnake.Color.blue()
+                                )
+                                dm_embed.set_thumbnail(
+                                    url=member.avatar.url if member.avatar else member.default_avatar.url)
+                                dm_embed.set_author(
+                                    name=guild.name, icon_url=guild.icon.url if guild.icon else None)
+                                dm_embed.add_field(
+                                    name="🎁 Geschenk", value="Du erhältst heute doppelte EP!", inline=False)
+                                dm_embed.add_field(
+                                    name="🎉 Dankeschön", value="Vielen Dank, dass du Teil unserer Community bist!", inline=False)
+                                dm_embed.add_field(
+                                    name="📞 Unterstützung", value="Wenn du irgendwelche Probleme hast, kannst du dich jederzeit an uns wenden.", inline=False)
+                                dm_embed.set_footer(
+                                    text="Wir wünschen dir einen tollen Tag!")
 
-                            # Sende die Nachricht im Server
-                            # Ersetzen Sie dies durch den gewünschten Kanal
-                            birthday_channel = guild.get_channel(
-                                854698447247769630)
-                            if birthday_channel:
-                                await birthday_channel.send(embed=server_embed)
-
-                            # DM Embed
-                            dm_embed = disnake.Embed(
-                                title="🎉 Alles Gute zum Geburtstag!",
-                                description=f"Lieber {username},",
-                                color=disnake.Color.blue()
-                            )
-                            dm_embed.set_thumbnail(
-                                url=member.avatar.url if member.avatar else member.default_avatar.url)
-                            dm_embed.set_author(
-                                name=guild.name, icon_url=guild.icon.url if guild.icon else None)
-                            dm_embed.add_field(
-                                name="🎁 Geschenk", value="Du erhältst heute doppelte EP!", inline=False)
-                            dm_embed.add_field(
-                                name="🎉 Dankeschön", value="Vielen Dank, dass du Teil unserer Community bist!", inline=False)
-                            dm_embed.add_field(
-                                name="📞 Unterstützung", value="Wenn du irgendwelche Probleme hast, kannst du dich jederzeit an uns wenden.", inline=False)
-                            dm_embed.set_footer(
-                                text="Wir wünschen dir einen tollen Tag!")
-
-                            # Sende die private Nachricht
-                            try:
-                                await member.send(embed=dm_embed)
-                            except disnake.Forbidden:
+                                # Sende die private Nachricht
+                                try:
+                                    await member.send(embed=dm_embed)
+                                except disnake.Forbidden:
+                                    self.logger.warning(
+                                        f"Konnte keine Nachricht an {username} ({discord_id}) senden. Möglicherweise hat der Benutzer DMs deaktiviert.")
+                            else:
                                 self.logger.warning(
-                                    f"Konnte keine Nachricht an {username} ({discord_id}) senden. Möglicherweise hat der Benutzer DMs deaktiviert.")
-                        else:
-                            self.logger.warning(
-                                f"Benutzer {username} ({discord_id}) ist nicht auf dem Server.")
-                        
+                                    f"Benutzer {username} ({discord_id}) ist nicht auf dem Server.")
+            self.logger.info("Geburtstage überprüft.")
+        elif current_time.hour == 0 and (current_time.minute == 0 or current_time.minute == 1 or current_time.minute == 2 or current_time.minute == 3 or current_time.minute == 4 or current_time.minute == 5):
+            for guild in self.bot.guilds:
+                birthday_role = self.rolemanager.get_role(guild.id, int(os.getenv('BIRTHDAY_ROLE_ID')))
+                if birthday_role:
+                    for member in guild.members:
+                        if birthday_role in member.roles:
+                            await member.remove_roles(birthday_role)
+                
+                today = current_time
+                cursor = await DatabaseConnectionManager.execute_sql_statement(guild.id, guild.name, "SELECT DISCORDID, USERNAME FROM USER WHERE strftime('%m-%d', BIRTHDAY) = ?", (today.strftime('%m-%d'),))
+                birthday_users = await cursor.fetchall()
+                if birthday_users:
+                    if guild:
+                        for user in birthday_users:
+                            discord_id, username = user
+                            member = guild.get_member(int(discord_id))
+                            if member: 
+                                if birthday_role:
+                                    await member.add_roles(birthday_role)
+
+    @exception_handler
+    async def _check_birthday(self, guild: disnake.Guild):
+        await self.check_birthdays()        
+
     @exception_handler
     async def are_user_friends(self, user_id: int, friend_id: int, guild: disnake.Guild) -> bool:
         """Überprüft, ob zwei Benutzer Freunde sind."""
@@ -455,7 +473,7 @@ class Globalfile(commands.Cog):
         return result[0] > 0
     
     async def get_user_privacy_settings(self, user_id: int, guild: disnake.Guild) -> Dict[str, str]:
-        user_record = await self.get_user_record(discordid=user_id)
+        user_record = await self.get_user_record(guild=guild,discordid=user_id)
         cursor = await DatabaseConnectionManager.execute_sql_statement(guild.id, guild.name, 
                                                                        "SELECT SETTING, VALUE FROM USER_SETTINGS WHERE USERID = ? AND SETTING IN ('xp', 'birthday', 'notes', 'warnings', 'friendlist', 'introduction')", (user_record['ID'],))
         settings = {row[0]: row[1] for row in await cursor.fetchall()}
@@ -1029,5 +1047,5 @@ class Globalfile(commands.Cog):
                             f"Thread {thread.name} wurde archiviert, da er älter als 7 Tage ist.")
 
 
-def setupGlobal(bot: commands.Bot, rolemanager: RoleManager):
-    bot.add_cog(Globalfile(bot, rolemanager))
+def setupGlobal(bot: commands.Bot, rolemanager: RoleManager, channelmanager: ChannelManager):
+    bot.add_cog(Globalfile(bot, rolemanager, channelmanager))

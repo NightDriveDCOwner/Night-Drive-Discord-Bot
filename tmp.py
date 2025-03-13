@@ -29,7 +29,7 @@ class Tmp(commands.Cog):
         self.logger = logging.getLogger("Commands")
         logging_level = os.getenv("LOGGING_LEVEL", "INFO").upper()
         self.logger.setLevel(logging_level)
-        self.globalfile = self.bot.get_cog('Globalfile')
+        self.globalfile : Globalfile = self.bot.get_cog('Globalfile')
         load_dotenv(dotenv_path="envs/settings.env")
         self.last_info_message = None
         self.last_info_time = None
@@ -47,9 +47,7 @@ class Tmp(commands.Cog):
         Globalfile.unban_task.cancel()
 
     @commands.Cog.listener()
-    async def on_ready(self):
-        self.verified_role = self.rolemanager.get_role(
-            self.bot.guilds[0].id, 1066793314482913391)
+    async def on_ready(self):        
         self.mod_channel = self.bot.get_channel(1090588808216596490)
         self.logger.info("Tmp Cog is ready.")
 
@@ -758,17 +756,17 @@ class Tmp(commands.Cog):
             await update_embed(interaction, current_page)
 
     @exception_handler
-    async def _verify_user(self, inter: disnake.ApplicationCommandInteraction, user: disnake.User):
+    async def _verify_user(self, inter: disnake.ApplicationCommandInteraction, member: disnake.Member):
         """Verifiziert einen Benutzer und gibt ihm die Rolle 'Verified'."""
         await inter.response.defer()
 
-        userrecord = await self.globalfile.get_user_record(guild=inter.guild, discordid=user.id)
+        userrecord = await self.globalfile.get_user_record(guild=inter.guild, discordid=member.id)
 
         cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "UPDATE USER SET verified = 1 WHERE ID = ?", (userrecord['ID'],))
-
-        if self.verified_role:
-            await user.add_roles(self.verified_role)
-            await inter.edit_original_response(content=f"{user.mention} wurde verifiziert und die Rolle {self.verified_role.mention} wurde hinzugefügt.")
+        verified_role = self.rolemanager.get_role(inter.guild.id, int(os.getenv("VERIFIED_ROLE_ID")))
+        if verified_role:
+            await member.add_roles(verified_role)
+            await inter.edit_original_response(content=f"{member.mention} wurde verifiziert und die Rolle {verified_role.mention} wurde hinzugefügt.")
             self.logger.info(
                 f"User {user.name} (ID: {user.id}) was verified by {inter.user.name} (ID: {inter.user.id}).")
         else:

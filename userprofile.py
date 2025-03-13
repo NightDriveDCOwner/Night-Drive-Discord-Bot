@@ -29,7 +29,6 @@ class UserProfile(commands.Cog):
         self.logger.setLevel(logging_level)
         self.globalfile : Globalfile = self.bot.get_cog('Globalfile')
         self.role_hierarchy = rolehierarchy()
-        self.team_roles = []
         self.rolemanager = rolemanager
 
         if not self.logger.handlers:
@@ -40,10 +39,28 @@ class UserProfile(commands.Cog):
             self.logger.addHandler(handler)
 
     @commands.Cog.listener()
-    async def on_ready(self):
-        load_dotenv(dotenv_path="envs/settings.env",override=True)
-        self.team_role = self.rolemanager.get_role(self.bot.guilds[0].id, int(os.getenv("TEAM_ROLE")))
+    async def on_ready(self):               
         self.logger.info("UserProfile cog ready.")
+
+    @commands.Cog.listener()
+    async def on_interaction(self, interaction: disnake.Interaction):
+        if interaction.type == disnake.InteractionType.component:
+            custom_id = interaction.data.custom_id
+
+            if custom_id == "continue_intro":
+                await interaction.response.send_message("Wir setzen die Befragung fort.", ephemeral=True)
+                await self.continue_intro(interaction)
+            elif custom_id == "restart_intro":
+                userrecord = await self.globalfile.get_user_record(guild=interaction.guild, discordid=interaction.user.id)
+                await DatabaseConnectionManager.execute_sql_statement(
+                    interaction.guild.id, interaction.guild.name,
+                    "DELETE FROM USER_INTRO WHERE USERID = ?", (userrecord['ID'],)
+                )
+                await interaction.response.send_message("Deine bisherigen Antworten wurden gelöscht. Wir beginnen von vorne.", ephemeral=True)
+                await self._create_intro(interaction)
+            elif custom_id == "start_intro":
+                await interaction.response.defer(ephemeral=True)
+                await self.ask_questions(interaction)
 
     @exception_handler
     async def _me(self, inter: disnake.ApplicationCommandInteraction):
@@ -213,32 +230,37 @@ class UserProfile(commands.Cog):
         await inter.edit_original_response(embed=embed)
 
     @exception_handler
-    async def _user_profile(self, inter: disnake.ApplicationCommandInteraction, user: disnake.User):
+    async def _user_profile(self, inter: disnake.ApplicationCommandInteraction, user: disnake.User = None, username: str = None, discordid: int = None):
         """Zeigt das Profil eines Benutzers an, einschließlich Notizen, Warnungen und Bans."""
         await inter.response.defer(ephemeral=True)
 
-        userrecord = await self.globalfile.get_user_record(guild=inter.guild, discordid=user.id)
+        if user:
+            userrecord = await self.globalfile.get_user_record(guild=inter.guild, discordid=user.id)
+        elif username:
+            userrecord = await self.globalfile.get_user_record(guild=inter.guild, username=username)
+        elif discordid:
+            userrecord = await self.globalfile.get_user_record(guild=inter.guild, discordid=discordid)
 
         # Hole die Benutzerinformationen aus der Tabelle User
         cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "SELECT * FROM USER WHERE ID = ?", (userrecord['ID'],))
         user_info = (await cursor.fetchone())
 
         if not user_info:
-            await inter.edit_original_response(content=f"Keine Informationen für Benutzer {user.mention} gefunden.")
+            await inter.edit_original_response(content=f"Keine Informationen für Benutzer **{userrecord['USERNAME']}** gefunden.")
             return
 
         # Hole die Privatsphäre-Einstellungen des Benutzers
-        privacy_settings = await self.globalfile.get_user_privacy_settings(user.id, inter.guild)
+        privacy_settings = await self.globalfile.get_user_privacy_settings(userrecord['DISCORDID'], inter.guild)
 
         # Überprüfe, ob der anfragende Benutzer mit dem Zielbenutzer befreundet ist
-        other_user_record = await self.globalfile.get_user_record(guild=inter.guild, discordid=user.id)
+        inter_user_record = await self.globalfile.get_user_record(guild=inter.guild, discordid=inter.user.id)
 
-        is_friend = await self.globalfile.are_user_friends(userrecord['ID'], other_user_record['ID'], inter.guild)
-        is_blocked = await self.globalfile.is_user_blocked(userrecord['ID'], other_user_record['ID'], inter.guild)
+        is_friend = await self.globalfile.are_user_friends(userrecord['ID'], inter_user_record['ID'], inter.guild)
+        is_blocked = await self.globalfile.is_user_blocked(userrecord['ID'], inter_user_record['ID'], inter.guild)
 
         def can_view(setting: str) -> bool:
-            # Überprüfen, ob der Benutzer die Teamrolle hat
-            if self.team_role in inter.user.roles:
+            team_role = self.rolemanager.get_role(inter.guild.id, int(os.getenv("TEAM_ROLE_ID")))
+            if team_role in inter.user.roles:
                 return True
 
             return (
@@ -290,14 +312,15 @@ class UserProfile(commands.Cog):
         else:
             xp_to_next_level = 0
             xp_percentage = 100
-
+        
         # Erstelle ein Embed
         embed = disnake.Embed(
-            title=f"Profil von {user.name}", color=disnake.Color.blue())
+            title=f"Profil von {userrecord['USERNAME']}", color=disnake.Color.blue())
         embed.set_author(name=self.bot.user.name,
                         icon_url=inter.guild.icon.url)
-        embed.set_thumbnail(
-            url=user.avatar.url if inter.user.avatar else inter.user.default_avatar.url)
+        if user != None:
+            embed.set_thumbnail(
+                url=user.avatar.url if inter.user.avatar else inter.user.default_avatar.url )
 
         # Füge Benutzerinformationen hinzu
         current_time = (await self.globalfile.get_current_time()).strftime('%H:%M:%S')
@@ -405,12 +428,31 @@ class UserProfile(commands.Cog):
             else:
                 embed.add_field(name="Warnungen",
                                 value="Keine Warnungen vorhanden.", inline=False)
+            
+            if bans:
+                for ban in bans:
+                    caseid = ban[0]
+                    reason = ban[2]
+                    created_at = ban[3]
+                    image_path = ban[4]
+                    ban_text = f"Grund: {reason}\nErstellt am: {created_at}"
+                    if image_path:
+                        ban_text += f"\nBildpfad: {image_path}"
+                    embed.add_field(
+                        name=f"Ban [ID: {caseid}]", value=ban_text, inline=False)
+                    if image_path and os.path.exists(image_path):
+                        embed.set_image(file=disnake.File(image_path))
+            else:
+                embed.add_field(name="Bans",
+                                value="Keine Bans vorhanden.", inline=False)
         else:
             embed.add_field(name="Warnungen",
                             value="Keinen Zugriff", inline=False)
-
+            embed.add_field(name="Bans",
+                            value="Keinen Zugriff", inline=False)
+            
         await inter.edit_original_response(embed=embed)
-        self.logger.info(f"User profile for {user.name} requested by {inter.user.name}")
+        self.logger.info(f"User profile for {userrecord['USERNAME']} requested by {inter_user_record['USERNAME']}")
 
     async def _privacy_settings(self, inter: disnake.ApplicationCommandInteraction):
         """Zeigt die Privatsphäre-Einstellungen an und erlaubt Änderungen."""
@@ -560,8 +602,8 @@ class UserProfile(commands.Cog):
         is_blocked = await self.globalfile.is_user_blocked(userrecord['ID'], other_user_record['ID'], inter.guild)
 
         def can_view(setting: str) -> bool:
-            # Überprüfen, ob der Benutzer die Teamrolle hat
-            if self.team_role in inter.user.roles:
+            if team_role is None: team_role = self.rolemanager.get_role(self.bot.guilds[0].id, int(os.getenv("TEAM_ROLE")))
+            if team_role in inter.user.roles:
                 return True
 
             return (
@@ -609,6 +651,221 @@ class UserProfile(commands.Cog):
         await inter.response.send_message(f"Beschreibung von {user.mention}:\n{introduction}", ephemeral=True)
         self.logger.info(f"User {inter.user.name} requested the introduction of {user.name}.")
     
+    @exception_handler
+    async def _create_intro(self, inter: disnake.ApplicationCommandInteraction):
+        """Startet das Intro-System und fragt den Benutzer nach verschiedenen Informationen."""
+        userrecord = await self.globalfile.get_user_record(guild=inter.guild, discordid=inter.user.id)
+
+        # Überprüfen, ob bereits Antworten vorhanden sind
+        cursor = await DatabaseConnectionManager.execute_sql_statement(
+            inter.guild.id, inter.guild.name,
+            "SELECT * FROM USER_INTRO WHERE USERID = ?", (userrecord['ID'],)
+        )
+        existing_data = await cursor.fetchone()
+
+        if existing_data:
+            embed = disnake.Embed(
+                title="Intro-System",
+                description="Es scheint, dass du bereits einige Informationen eingegeben hast. Möchtest du fortfahren oder neu beginnen?",
+                color=disnake.Color.blue()
+            )
+            view = View(timeout=None)
+            continue_button = Button(label="Fortfahren", style=ButtonStyle.green, custom_id="continue_intro")
+            restart_button = Button(label="Neu beginnen", style=ButtonStyle.red, custom_id="restart_intro")
+            view.add_item(continue_button)
+            view.add_item(restart_button)
+
+            await inter.response.send_message(embed=embed, view=view, ephemeral=True)
+            return
+
+        # Erklärung der Prozedur
+        embed = disnake.Embed(
+            title="Intro-System",
+            description=(
+                "Willkommen zum Intro-System! Du wirst nun Schritt für Schritt nach verschiedenen Informationen gefragt.\n\n"
+                "Bitte antworte auf jede Frage, indem du eine Nachricht in den Chat schreibst. Du hast auch die Möglichkeit, keine Angabe zu machen, indem du auf den entsprechenden Button klickst.\n"
+                "Die Nachrichten die du zur Erkennung in den Chat schickst werden direkt gelöscht und vom System erfasst. Deswegen also bitte nicht wundern.\n\n"
+                "Lass uns beginnen!"
+            ),
+            color=disnake.Color.blue()
+        )
+        view = View(timeout=None)
+        start_button = Button(label="Befragung starten", style=ButtonStyle.green, custom_id="start_intro")
+        view.add_item(start_button)        
+
+        await inter.response.send_message(embed=embed, view=view, ephemeral=True)
+
+    async def ask_questions(self, interaction: disnake.Interaction):
+        questions = [
+            ("Titel", "Hier kannst du den Titel deiner Vorstellung vergeben:"),
+            ("Vorname", "Bitte gib deinen Vornamen ein:"),
+            ("Alter", "Bitte gib dein Alter ein:"),
+            ("Geschlecht", "Bitte gib dein Geschlecht ein:"),
+            ("Sexualität", "Bitte gib deine Sexualität ein:"),
+            ("Aussehen", "Bitte beschreibe dein Aussehen:"),
+            ("Hobbys", "Bitte nenne deine Hobbys:"),
+            ("Games", "Welche Spiele spielst du gerne?"),
+            ("Musik", "Welche Musik hörst du gerne?"),
+            ("Persönlichkeit", "Wie würdest du deine Persönlichkeit beschreiben?"),
+            ("Über mich", "Erzähle uns etwas über dich:")
+        ]
+
+        responses = {}
+
+        for field, question in questions:
+            embed = disnake.Embed(title="Intro", description=question, color=disnake.Color.blue())
+            view = View(timeout=None)
+            button = Button(label="Keine Angabe", style=ButtonStyle.grey, custom_id=f"skip_{field}")
+            view.add_item(button)
+
+            def check(m):
+                return m.author == interaction.user and m.channel == interaction.channel
+
+            def button_check(i):
+                return i.user.id == interaction.user.id and i.data.custom_id == f"skip_{field}"
+
+            await interaction.edit_original_message(embed=embed, view=view)
+
+            try:
+                done, pending = await asyncio.wait(
+                    [
+                        asyncio.create_task(self.bot.wait_for('message', timeout=180.0, check=check)),
+                        asyncio.create_task(self.bot.wait_for('interaction', timeout=180.0, check=button_check))
+                    ],
+                    return_when=asyncio.FIRST_COMPLETED
+                )
+
+                for future in pending:
+                    future.cancel()
+
+                if done:
+                    result = done.pop().result()
+                    if isinstance(result, disnake.Message):
+                        responses[field] = result.content
+                        await result.delete()
+                    elif isinstance(result, disnake.Interaction):
+                        responses[field] = "Keine Angabe"
+                        await result.response.defer()
+            except asyncio.TimeoutError:
+                await interaction.followup.send("Zeit abgelaufen. Bitte versuche es erneut.", ephemeral=True)
+                return
+
+        # Geschlecht und Sexualität aus den Rollen entnehmen
+        gender_roles = ["Männlich", "Weiblich", "Divers"]
+        sexuality_roles = ["Heterosexuell", "Homosexuell", "Bisexuell", "Asexuell", "Pansexuell"]
+
+        for role in interaction.user.roles:
+            if role.name in gender_roles:
+                responses["Geschlecht"] = role.name
+            if role.name in sexuality_roles:
+                responses["Sexualität"] = role.name
+        await interaction.delete_original_message()
+        await self.save_intro_data(interaction.guild, interaction.user.id, responses)
+        await interaction.followup.send("Deine Informationen wurden erfolgreich gespeichert.", ephemeral=True)
+        self.logger.info(f"User {interaction.user.name} completed the intro.")        
+
+    async def save_intro_data(self, guild, user_id: int, responses: Dict[str, str]):
+        """Speichert die gesammelten Informationen in der Datenbank."""
+        user_id = (await self.globalfile.get_user_record(guild=guild, discordid=user_id))['ID']
+        await DatabaseConnectionManager.execute_sql_statement(
+            guild.id, guild.name,
+            """
+            INSERT INTO USER_INTRO (USERID, TITLE, FIRST_NAME, AGE, GENDER, SEXUALITY, APPEARANCE, HOBBIES, GAMES, MUSIC, PERSONALITY, ABOUT_ME)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(USERID) DO UPDATE SET
+                TITLE = excluded.TITLE,
+                FIRST_NAME = excluded.FIRST_NAME,
+                AGE = excluded.AGE,
+                GENDER = excluded.GENDER,
+                SEXUALITY = excluded.SEXUALITY,
+                APPEARANCE = excluded.APPEARANCE,
+                HOBBIES = excluded.HOBBIES,
+                GAMES = excluded.GAMES,
+                MUSIC = excluded.MUSIC,
+                PERSONALITY = excluded.PERSONALITY,
+                ABOUT_ME = excluded.ABOUT_ME
+            """,
+            (
+                int(user_id),
+                responses.get("Titel"),
+                responses.get("Vorname"),
+                responses.get("Alter"),
+                responses.get("Geschlecht"),
+                responses.get("Sexualität"),
+                responses.get("Aussehen"),
+                responses.get("Hobbys"),
+                responses.get("Games"),
+                responses.get("Musik"),
+                responses.get("Persönlichkeit"),
+                responses.get("Über mich")
+            )
+        )
+
+    @exception_handler
+    async def _show_intro(self, intro: disnake.ApplicationCommandInteraction, user: disnake.User):
+        """Zeigt die Vorstellung eines Benutzers an, wenn die Berechtigungen es erlauben."""
+        userrecord = await self.globalfile.get_user_record(guild=intro.guild, discordid=user.id)
+        privacy_settings = await self.globalfile.get_user_privacy_settings(user.id, intro.guild)
+        
+        # Überprüfe, ob der anfragende Benutzer mit dem Zielbenutzer befreundet ist
+        other_user_record = await self.globalfile.get_user_record(guild=intro.guild, discordid=intro.user.id)
+        is_friend = await self.globalfile.are_user_friends(userrecord['ID'], other_user_record['ID'], intro.guild)
+        is_blocked = await self.globalfile.is_user_blocked(userrecord['ID'], other_user_record['ID'], intro.guild)
+
+        team_role = None  # Initialisiere team_role
+
+        def can_view(setting: str) -> bool:
+            nonlocal team_role  # Verwende nonlocal, um auf die äußere Variable zuzugreifen
+            if team_role is None:
+                load_dotenv(dotenv_path="envs/settings.env")
+                team_role = self.rolemanager.get_role(intro.guild.id, int(os.getenv("TEAM_ROLE_ID")))
+            if team_role in intro.user.roles:
+                return True
+
+            return (
+                privacy_settings.get(setting, 'nobody') == 'everyone' or
+                (privacy_settings.get(setting, 'nobody') == 'friends' and is_friend) or
+                (privacy_settings.get(setting, 'nobody') == 'blocked' and not is_blocked)
+            )
+
+        if not can_view('introduction') and intro.user != user:
+            await intro.response.send_message("Du hast keine Berechtigung, die Vorstellung dieses Benutzers zu sehen.", ephemeral=True)
+            return
+
+        cursor = await DatabaseConnectionManager.execute_sql_statement(intro.guild.id, intro.guild.name, "SELECT * FROM USER_INTRO WHERE USERID = ?", (userrecord['ID'],))
+        intro_data = await cursor.fetchone()
+
+        if not intro_data:
+            await intro.response.send_message("Dieser Benutzer hat keine Vorstellung hinterlegt.", ephemeral=True)
+            return
+
+        embed = disnake.Embed(
+            title=f"📜 {intro_data[2] or 'Vorstellung'}",  # Accessing the TITLE field by index
+            color=disnake.Color.blue()
+        )
+        embed.set_author(name=intro.guild.name, icon_url=intro.guild.icon.url)
+        embed.set_thumbnail(url=user.avatar.url if user.avatar else user.default_avatar.url)
+
+        fields = {
+            "FIRST_NAME": "👤 Vorname",
+            "AGE": "🎂 Alter",
+            "GENDER": "🚻 Geschlecht",
+            "SEXUALITY": "🏳️‍🌈 Sexualität",
+            "APPEARANCE": "🧍 Aussehen",
+            "HOBBIES": "🎨 Hobbys",
+            "GAMES": "🎮 Spiele",
+            "MUSIC": "🎵 Musik",
+            "PERSONALITY": "🧠 Persönlichkeit",
+            "ABOUT_ME": "📖 Über mich"
+        }
+
+        for index, (field, name) in enumerate(fields.items(), start=3):  # Start from index 2 to match the tuple structure
+            value = intro_data[index]
+            if value:
+                embed.add_field(name=name, value=value, inline=field in ["FIRST_NAME", "AGE", "GENDER", "SEXUALITY"])
+
+        await intro.response.send_message(embed=embed, ephemeral=True)
+        self.logger.info(f"User introduction for {user.name} requested by {intro.user.name}")
 
 def setupProfile(bot: commands.Bot, rolemanager: RoleManager):
     bot.add_cog(UserProfile(bot, rolemanager))        

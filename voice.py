@@ -9,16 +9,18 @@ import sqlite3
 from dbconnection import DatabaseConnectionManager
 from exceptionhandler import exception_handler
 from rolemanager import RoleManager
+from channelmanager import ChannelManager
 
 
 class Voice(commands.Cog):
-    def __init__(self, bot: commands.Bot, rolemanager: RoleManager):
+    def __init__(self, bot: commands.Bot, rolemanager: RoleManager, channelmanager: ChannelManager):
         self.bot = bot
         self.logger = logging.getLogger("Voice")
         logging_level = os.getenv("LOGGING_LEVEL", "INFO").upper()
         self.logger.setLevel(logging_level)
         self.globalfile: Globalfile = self.bot.get_cog("Globalfile")
         self.rolemanager = rolemanager
+        self.channelmanager = channelmanager
 
         if not self.logger.handlers:
             formatter = logging.Formatter(
@@ -30,11 +32,7 @@ class Voice(commands.Cog):
         self.allowed_category_id = 1069043859998396529
 
     @commands.Cog.listener()
-    async def on_ready(self):
-        self.auditlog_channel: disnake.TextChannel = self.bot.get_channel(
-            1221018527289577582)
-        self.voicelog_channel: disnake.TextChannel = self.bot.get_channel(
-            1219347644640530553)
+    async def on_ready(self):                
         self.logger.info("Voice Cog is ready.")
 
     @commands.Cog.listener()
@@ -43,7 +41,8 @@ class Voice(commands.Cog):
         embed = None
         avatar_url = member.avatar.url if member.avatar else member.default_avatar.url
         guild = member.guild
-        channel = self.voicelog_channel
+        voicelog_channel: disnake.TextChannel = self.channelmanager.get_channel(member.guild.id, int(os.getenv("VOICELOG_CHANNEL_ID")))
+        channel = voicelog_channel
         current_datetime = (await self.globalfile.get_current_time())
 
         def create_embed(title, color):
@@ -78,7 +77,8 @@ class Voice(commands.Cog):
             else:
                 self.logger.info(
                     f"{member.name} wurde von {User.username}({User.userid}) aus dem Channel {before.channel.name} gekickt.")
-                channel = self.auditlog_channel
+                auditlog_channel: disnake.TextChannel = self.channelmanager.get_channel(member.guild.id, int(os.getenv("AUDITLOG_CHANNEL_ID")))
+                channel = auditlog_channel
                 embed = create_embed(
                     f"{member.name} was kicked from {User.username}({User.userid}) out of Channel {before.channel.name}.", 0xFF0000)
 
@@ -92,14 +92,16 @@ class Voice(commands.Cog):
                 else:
                     self.logger.info(
                         f"{member.name} wurde generell gemuted von {User.username}({User.userid}).")
-                    channel = self.auditlog_channel
+                    auditlog_channel: disnake.TextChannel = self.channelmanager.get_channel(member.guild.id, int(os.getenv("AUDITLOG_CHANNEL_ID")))
+                    channel = auditlog_channel
                     embed = create_embed(
                         f"{member.name} was generally muted from {User.username}({User.userid}).", 0xFF0000)
             elif after.mute:
                 User = await self.globalfile.admin_did_something(disnake.AuditLogAction.member_update, member, member.guild)
                 self.logger.info(
                     f"{member.name}'s Mikrofon wurde von {User.username}({User.userid}) stummgeschaltet.")
-                channel = self.auditlog_channel
+                auditlog_channel: disnake.TextChannel = self.channelmanager.get_channel(member.guild.id, int(os.getenv("AUDITLOG_CHANNEL_ID")))
+                channel = auditlog_channel
                 embed = create_embed(
                     f"{member.name} microphone was muted from {User.username}({User.userid}).", 0xFF0000)
             elif after.self_mute:
@@ -113,10 +115,11 @@ class Voice(commands.Cog):
                     embed = create_embed(
                         f"User no longer muted <#{after.channel.id}>!", 0x006400)
                 else:
-                    User = await self.globalfile.admin_did_something(disnake.AuditLogAction.member_update, member.guild, member, member.guild)
+                    User = await self.globalfile.admin_did_something(disnake.AuditLogAction.member_update, member, member.guild)
                     self.logger.info(
                         f"{member.name} wurde von {User.username}({User.userid}) entmuted.")
-                    channel = self.auditlog_channel
+                    auditlog_channel: disnake.TextChannel = self.channelmanager.get_channel(member.guild.id, int(os.getenv("AUDITLOG_CHANNEL_ID")))
+                    channel = auditlog_channel
                     embed = create_embed(
                         f"{member.name} was unmuted from {User.username}({User.userid}).", 0xFF0000)
 
@@ -534,5 +537,5 @@ class Voice(commands.Cog):
             await inter.response.send_message("Dieser Befehl kann nur in einer bestimmten Kategorie verwendet werden.", ephemeral=True)
 
 
-def setupVoice(bot: commands.Bot, rolemanager: RoleManager):
-    bot.add_cog(Voice(bot, rolemanager))
+def setupVoice(bot: commands.Bot, rolemanager: RoleManager, channelmanager: ChannelManager):
+    bot.add_cog(Voice(bot, rolemanager, channelmanager))

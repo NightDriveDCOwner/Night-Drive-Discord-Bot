@@ -37,12 +37,9 @@ class Ticket(commands.Cog):
 
     @commands.Cog.listener()
     async def on_ready(self):
-        self.support_channel = self.bot.guilds[0].get_channel(
-            1061446191088418888)
-        self.verify_channel = self.bot.guilds[0].get_channel(
-            1323005558730657812)
-        self.team_role = self.rolemanager.get_role(
-            self.bot.guilds[0].id, 1235534762609872899)
+        self.support_channel = self.bot.guilds[0].get_channel(1061446191088418888)
+        self.verify_channel = self.bot.guilds[0].get_channel(1323005558730657812)
+        self.team_role = self.rolemanager.get_role(self.bot.guilds[0].id, 1235534762609872899)
         guild = await self.bot.fetch_guild(854698446996766730)
         self.bot.add_view(await self.create_bewerbung_view(guild))
         self.bot.add_view(await self.create_ticket_view(guild))
@@ -181,7 +178,7 @@ class Ticket(commands.Cog):
                 elif selected_value == "support":
                     await self.create_ticket_channel(interaction, "Support Ticket")
             elif custom_id == "delete_channel_button":
-                if self.team_role in interaction.user.roles:
+                if self.team_role in interaction.user.roles:                    
                     await interaction.channel.delete()
                 else:
                     await interaction.response.send_message("Du hast nicht die erforderlichen Berechtigungen, um diesen Kanal zu löschen.", ephemeral=True)
@@ -232,13 +229,13 @@ class Ticket(commands.Cog):
         overwrites = {
             guild.default_role: disnake.PermissionOverwrite(read_messages=False),
             interaction.user: disnake.PermissionOverwrite(
-                read_messages=True, send_messages=True)
+                read_messages=True, send_messages=True)            
         }
 
         if ticket_type.lower() == "admin ticket" and leitung_role:
             overwrites[leitung_role] = disnake.PermissionOverwrite(
                 read_messages=True, send_messages=True)
-        elif ticket_type.lower() == "ticket" and team_role:
+        elif ticket_type.lower() == "support ticket" and team_role:
             overwrites[team_role] = disnake.PermissionOverwrite(
                 read_messages=True, send_messages=True)
 
@@ -253,9 +250,10 @@ class Ticket(commands.Cog):
             await interaction.response.send_message("Fehler beim Erstellen des Ticketkanals. Bitte versuchen Sie es erneut.", ephemeral=True)
             return
 
+        user_reccord = await self.globalfile.get_user_record(interaction.guild, discordid=interaction.user.id)
         # Insert the new entry into the database
         created_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        await DatabaseConnectionManager.execute_sql_statement(interaction.guild.id, interaction.guild.name, "INSERT INTO Ticket (ID, TICKETTYPE, USERID, CREATED_AT) VALUES (?, ?, ?, ?)", (next_id, ticket_type, interaction.user.id, created_at))
+        await DatabaseConnectionManager.execute_sql_statement(interaction.guild.id, interaction.guild.name, "INSERT INTO Ticket (ID, TICKETTYPE, USERID, CREATED_AT) VALUES (?, ?, ?, ?)", (next_id, ticket_type, user_reccord['ID'], created_at))
 
         # Create the Claim button
         claim_button = disnake.ui.Button(
@@ -295,10 +293,13 @@ class Ticket(commands.Cog):
             color=0x98f5ff
         )
         # Send the message in the new channel
-        ticket_embed.set_thumbnail(url=interaction.user.avatar.url)
+        avatar_url = interaction.user.avatar.url if interaction.user.avatar else interaction.user.default_avatar.url
+        ticket_embed.set_thumbnail(url=avatar_url)
         ticket_embed.set_footer(text=f"Ticket ID: {next_id}")
         ticket_embed.set_author(name=guild.name, icon_url=guild.icon.url)
         await ticket_channel.send(embed=ticket_embed, view=claim_view)
+        message: disnake.Message = await ticket_channel.send(f"{team_role.mention}")
+        await message.delete()
         await interaction.response.send_message(f"Dein Ticket wurde erfolgreich erstellt. {ticket_channel.mention}", ephemeral=True)
 
     @exception_handler
@@ -316,9 +317,9 @@ class Ticket(commands.Cog):
             await interaction.response.send_message(f"Dieses Ticket wurde bereits {assigned_user.mention} zugewiesen.", ephemeral=True)
             self.logger.debug(f"Ticket {ticket_id} wurde bereits zugewiesen.")
             return
-
+        user_reccord = await self.globalfile.get_user_record(interaction.guild, discordid=interaction.user.id)
         # Aktualisiere das Ticket in der Datenbank
-        cursor = await DatabaseConnectionManager.execute_sql_statement(interaction.guild.id, interaction.guild.name, "UPDATE Ticket SET ASSIGNED = ? WHERE ID = ?", (interaction.author.id, ticket_id))
+        cursor = await DatabaseConnectionManager.execute_sql_statement(interaction.guild.id, interaction.guild.name, "UPDATE Ticket SET ASSIGNED = ? WHERE ID = ?", (user_reccord['ID'], ticket_id))
 
         await interaction.response.send_message(f"Dieses Ticket wurde dem Teammitglied {interaction.author.mention} zugewiesen.")
         self.logger.info(
@@ -334,16 +335,18 @@ class Ticket(commands.Cog):
 
         # Schließe den Kanal nicht sofort, sondern sende ein Embed mit einem Button zum endgültigen Löschen
         cursor = await DatabaseConnectionManager.execute_sql_statement(interaction.guild.id, interaction.guild.name, "SELECT USERID, TICKETTYPE, CREATED_AT, ASSIGNED FROM Ticket WHERE ID = ?", (ticket_id,))
+
         ticket_info = (await cursor.fetchone())
         user_id, ticket_type, created_at, assigned_id = ticket_info
-        user = await self.bot.fetch_user(user_id)
+        user_reccord = await self.globalfile.get_user_record(interaction.guild, user_id=user_id)
+        user = await self.bot.fetch_user(int(user_reccord['DISCORDID']))
 
         # Entferne Schreibrechte des Benutzers
         team_role_id = 1235534762609872899
         bot_role_id = 854698446996766738
 
-        team_role = disnake.utils.get(interaction.guild.roles, id=team_role_id)
-        bot_role = disnake.utils.get(interaction.guild.roles, id=bot_role_id)
+        team_role = self.rolemanager.get_role(interaction.guild.id, team_role_id)
+        bot_role = self.rolemanager.get_role(interaction.guild.id, bot_role_id)
 
         for member in interaction.channel.members:
             if team_role not in member.roles and bot_role not in member.roles:
@@ -366,7 +369,8 @@ class Ticket(commands.Cog):
         log_channel = self.bot.get_channel(1061456790279168141)
         # Ersetze durch die ID des gewünschten Kanals
         test_channel = self.bot.get_channel(1233796714721317014)
-        assigned_user = await self.bot.fetch_user(assigned_id) if assigned_id else None
+        user_reccord = await self.globalfile.get_user_record(interaction.guild, user_id=assigned_id)
+        assigned_user = await self.bot.fetch_user(user_reccord['DISCORDID']) if assigned_id else None
         embed = disnake.Embed(
             title="Ticket geschlossen",
             description=f"Ticket ID: {ticket_id}\nTicket Typ: {ticket_type}\nErstellt von: {user.mention}\nErstellt am: {created_at}\nZugewiesen an: {assigned_user.mention if assigned_user else 'Nicht zugewiesen'}",

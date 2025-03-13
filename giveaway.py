@@ -104,7 +104,7 @@ class Giveaway(commands.Cog):
                 await interaction.response.send_message("Du darfst nicht an diesem Gewinnspiel teilnehmen.", ephemeral=True)
                 return
 
-        user_record = await self.globalfile_cog.get_user_record(discordid=interaction.user.id)
+        user_record = await self.globalfile_cog.get_user_record(guild=interaction.guild,discordid=interaction.user.id)
         if not user_record:
             await interaction.response.send_message("Benutzer nicht gefunden.", ephemeral=True)
             return
@@ -144,7 +144,7 @@ class Giveaway(commands.Cog):
         user_chances = []
         for entry in entries:
             user_id = entry[0]
-            user_record = await self.globalfile_cog.get_user_record(user_id=user_id)
+            user_record = await self.globalfile_cog.get_user_record(user_id=user_id, guild=inter.guild)
             if not user_record:
                 continue
 
@@ -165,7 +165,7 @@ class Giveaway(commands.Cog):
             return
 
         winner_id = random.choice(user_chances)
-        user_record = await self.globalfile_cog.get_user_record(user_id=winner_id)
+        user_record = await self.globalfile_cog.get_user_record(guild=inter.guild,user_id=winner_id)
         winner = await self.bot.fetch_user(user_record["DISCORDID"])
 
         embed = disnake.Embed(

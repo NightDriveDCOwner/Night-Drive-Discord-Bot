@@ -13,9 +13,10 @@ import asyncio
 import datetime
 from exceptionhandler import exception_handler
 from rolemanager import RoleManager
+from channelmanager import ChannelManager
 
 class Level(commands.Cog):
-    def __init__(self, bot: commands.Bot, rolemanager: RoleManager):
+    def __init__(self, bot: commands.Bot, rolemanager: RoleManager, channelmanager: ChannelManager):
         self.bot = bot
         self.logger = logging.getLogger("Experience")
         if not self.logger.handlers:
@@ -27,6 +28,7 @@ class Level(commands.Cog):
 
         self.globalfile : Globalfile = self.bot.get_cog('Globalfile')
         self.rolemanager = rolemanager
+        self.channelmanager = channelmanager
 
         load_dotenv(dotenv_path="envs/settings.env")
         self.factor = int(os.getenv("FACTOR", 100))  # Faktor als Prozentwert
@@ -70,7 +72,14 @@ class Level(commands.Cog):
                         # Ersetze dies durch die tatsächliche ID der Zweitaccount-Rolle
                         second_account_role_id = 1329202926916472902
                         if second_account_role_id not in [role.id for role in member.roles]:
-                            await DatabaseConnectionManager.execute_sql_statement(guild.id, guild.name, "UPDATE EXPERIENCE SET VOICE = VOICE + ? WHERE USERID = ?", (self.message_worth_per_voicemin * self.factor, user_id))
+                            load_dotenv(dotenv_path="envs/settings.env")
+                            birthday_role = self.rolemanager.get_role(guild.id, int(os.getenv("BIRTHDAY_ROLE_ID")))
+                            
+                            xp_to_add = self.message_worth_per_voicemin * self.factor
+                            if birthday_role in member.roles:
+                                xp_to_add *= 2
+                            
+                            await DatabaseConnectionManager.execute_sql_statement(guild.id, guild.name, "UPDATE EXPERIENCE SET VOICE = VOICE + ? WHERE USERID = ?", (xp_to_add, user_id))
                             await self.check_level_up(member, user_id, guild)
             await asyncio.sleep(30)
 
@@ -132,6 +141,9 @@ class Level(commands.Cog):
         cursor = await DatabaseConnectionManager.execute_sql_statement(message.guild.id, message.guild.name, "SELECT ID FROM USER WHERE DISCORDID = ?", (message.author.id,))
         user_record = (await cursor.fetchone())
         if user_record:
+            load_dotenv(dotenv_path="envs/settings.env")
+            birthday_role = self.rolemanager.get_role(message.guild.id, int(os.getenv("BIRTHDAY_ROLE_ID")))
+            
             user_id = user_record[0]
             current_date = (await self.globalfile.get_current_time()).strftime('%Y-%m-%d')
             cursor = await DatabaseConnectionManager.execute_sql_statement(message.guild.id, message.guild.name, "SELECT * FROM MESSAGE_XP WHERE USERID = ? AND DATE = ?", (user_id, current_date))
@@ -145,7 +157,10 @@ class Level(commands.Cog):
             # Ersetze dies durch die tatsächliche ID der Zweitaccount-Rolle
             second_account_role_id = 1329202926916472902
             if second_account_role_id not in [role.id for role in message.author.roles]:
-                await DatabaseConnectionManager.execute_sql_statement(message.guild.id, message.guild.name, "UPDATE EXPERIENCE SET MESSAGE = MESSAGE + ? WHERE USERID = ?", (self.factor, user_id))
+                xp_to_add = self.factor
+                if birthday_role in message.author.roles:
+                    xp_to_add *= 2
+                await DatabaseConnectionManager.execute_sql_statement(message.guild.id, message.guild.name, "UPDATE EXPERIENCE SET MESSAGE = MESSAGE + ? WHERE USERID = ?", (xp_to_add, user_id))
 
                 await self.check_level_up(message.author, user_id, message.guild)
 
@@ -179,7 +194,7 @@ class Level(commands.Cog):
             result = (await cursor.fetchone())
             if result and result[0]:
                 role_id = result[0]
-                new_role = member.guild.get_role(int(role_id))
+                new_role = self.rolemanager.get_role(member.guild.id, int(role_id))
                 if new_role:
                     break
             level -= 1
@@ -447,43 +462,57 @@ class Level(commands.Cog):
         return view
 
     @exception_handler
-    async def handle_top_users_interaction(self, interaction: disnake.Interaction):
-        await interaction.response.defer()  # Sofortige Antwort auf die Interaktion
+    async def handle_top_users_interaction(self, interaction: disnake.MessageInteraction):
+        try:
+            await interaction.response.defer()  # Sofortige Antwort auf die Interaktion
 
-        sort_by = "XP"
-        time_period = "total"
-        if interaction.data["custom_id"] == "sort_by":
-            sort_by = interaction.data["values"][0]
-        if interaction.data["custom_id"] == "time_period":
-            time_period = interaction.data["values"][0]
+            # Standardwerte setzen
+            sort_by = "XP"
+            time_period = "total"
 
-        top_users = await self.fetch_top_users(sort_by, time_period, interaction.guild)
+            # Werte aus den children extrahieren
+            for action_row in interaction.message.components:
+                for child in action_row.children:
+                    for option in child.options:
+                        if option.default:
+                            if child.custom_id == "sort_by":
+                                sort_by = option.value
+                            elif child.custom_id == "time_period":
+                                time_period = option.value
 
-        # Aktualisiere das Embed
-        embed = disnake.Embed(title="Top Benutzer",
-                              color=disnake.Color.dark_blue())
-        for i, (user_id, message_xp, voice_xp, invite_xp, bonus_xp, xp) in enumerate(top_users, start=1):
+            # Werte aus der Interaktion extrahieren, falls vorhanden
+            if interaction.data["custom_id"] == "sort_by":
+                sort_by = interaction.data["values"][0]
+            if interaction.data["custom_id"] == "time_period":
+                time_period = interaction.data["values"][0]
 
-            cursor = await DatabaseConnectionManager.execute_sql_statement(interaction.guild.id, interaction.guild.name, "SELECT LEVEL FROM EXPERIENCE WHERE USERID = ?", (user_id,))
-            level = (await cursor.fetchone())[0]
+            top_users = await self.fetch_top_users(sort_by, time_period, interaction.guild)
 
-            self.logger.debug(
-                f"user_id: {user_id}, message_xp: {message_xp}, voice_xp: {voice_xp}, invite_xp: {invite_xp}, bonus_xp: {bonus_xp}, xp: {xp}")
-            try:
-                user_record = await self.globalfile.get_user_record(guild=interaction.guild, user_id=user_id)
-                if user_record:
-                    discord_id = user_record['DISCORDID']
-                    member = interaction.guild.get_member(int(discord_id))
-                    if member:
-                        embed.add_field(
-                            name=f"#{i} {member.name} (Level {level})",
-                            value=f"Total: {int(xp) // 10} XP |✍️ {int(message_xp)} |🎙️ {int(voice_xp // 2)} Min |📩 {int(invite_xp)} |✨ {int(bonus_xp)}",
-                            inline=False
-                        )
-            except disnake.NotFound:
-                continue  # Überspringe Benutzer, die nicht gefunden werden
+            # Aktualisiere das Embed
+            embed = disnake.Embed(title="Top Benutzer", color=disnake.Color.dark_blue())
+            for i, (user_id, message_xp, voice_xp, invite_xp, bonus_xp, xp) in enumerate(top_users, start=1):
+                cursor = await DatabaseConnectionManager.execute_sql_statement(interaction.guild.id, interaction.guild.name, "SELECT LEVEL FROM EXPERIENCE WHERE USERID = ?", (user_id,))
+                level = (await cursor.fetchone())[0]
 
-        await interaction.edit_original_response(embed=embed, view=await self.create_top_users_view(sort_by, time_period))
+                self.logger.debug(f"user_id: {user_id}, message_xp: {message_xp}, voice_xp: {voice_xp}, invite_xp: {invite_xp}, bonus_xp: {bonus_xp}, xp: {xp}")
+                try:
+                    user_record = await self.globalfile.get_user_record(guild=interaction.guild, user_id=user_id)
+                    if user_record:
+                        discord_id = user_record['DISCORDID']
+                        member = interaction.guild.get_member(int(discord_id))
+                        if member:
+                            embed.add_field(
+                                name=f"#{i} {member.name} (Level {level})",
+                                value=f"Total: {int(xp) // 10} XP |✍️ {int(message_xp)} |🎙️ {int(voice_xp // 2)} Min |📩 {int(invite_xp)} |✨ {int(bonus_xp)}",
+                                inline=False
+                            )
+                except disnake.NotFound:
+                    continue  # Überspringe Benutzer, die nicht gefunden werden
+
+            await interaction.edit_original_response(embed=embed, view=await self.create_top_users_view(sort_by, time_period))
+        except disnake.errors.NotFound:
+            self.logger.error("Interaction not found or already responded to.")
+            await interaction.followup.send("Ein Fehler ist aufgetreten. Bitte versuche es später erneut oder öffne ein Ticket. Über dieses erfährst du wenn der Fehler behoben wurde.", ephemeral=True)
 
     @exception_handler
     async def fetch_top_users(self, sort_by: str = "XP", time_period: str = "total", guild: disnake.Guild = None):
@@ -579,14 +608,11 @@ class Level(commands.Cog):
             try:
                 user_record = await self.globalfile.get_user_record(guild=inter.guild, user_id=user_id)
                 if user_record:
-                    discord_id = user_record['DISCORDID']
-                    member = inter.guild.get_member(int(discord_id))
-                    if member:
-                        embed.add_field(
-                            name=f"#{i} {member.name} ⯎ {level}",
-                            value=f"Total: {int(xp)//10} XP 💠 ✍️ {message_xp} | 🎙️ {voice_xp // 2} | 📩 {invite_xp} | ✨ {bonus_xp} ",
-                            inline=False
-                        )
+                    embed.add_field(
+                        name=f"#{i} {user_record['USERNAME']} ⯎ {level}",
+                        value=f"Total: {int(xp)//10} XP 💠 ✍️ {message_xp} | 🎙️ {voice_xp // 2} | 📩 {invite_xp} | ✨ {bonus_xp} ",
+                        inline=False
+                    )
             except disnake.NotFound:
                 continue  # Überspringe Benutzer, die nicht gefunden werden
 
@@ -617,50 +643,44 @@ class Level(commands.Cog):
     async def _add_xp_to_user(self, inter: disnake.ApplicationCommandInteraction, user: disnake.User, xp: int, reason: str):
         """Fügt einem einzelnen Benutzer XP hinzu."""
         await inter.response.defer()
-        await self.add_bonus_xp(user, xp, reason, inter.guild)
+        await self.add_bonus_xp(inter, user, xp, reason, inter.guild)
         await inter.edit_original_response(content=f"{xp} XP wurden erfolgreich an {user.mention} vergeben.")
 
     @exception_handler
-    async def add_bonus_xp(self, user: disnake.User, xp: int, reason: str, guild: disnake.Guild = None):
+    async def add_bonus_xp(self, inter: disnake.ApplicationCommandInteraction, user: disnake.User, calculated_xp: int, reason: str, guild: disnake.Guild = None):
         userrecord = await self.globalfile.get_user_record(guild=guild, discordid=user.id)
         if not userrecord:
             self.logger.warning(f"User record not found for {user.id}")
             return
 
         user_id = userrecord['ID']
-        calculated_xp = xp // self.factor
+        xp = calculated_xp // self.factor
         current_datetime = (await self.globalfile.get_current_time()).strftime('%Y-%m-%d %H:%M:%S')
 
         # Insert into BONUS_XP table
-        cursor = await DatabaseConnectionManager.execute_sql_statement(guild.id, guild.name, """
+        await DatabaseConnectionManager.execute_sql_statement(guild.id, guild.name, """
             INSERT INTO BONUS_XP (USERID, REASON, INSERT_DATE, ORIGINAL_XP, CALCULATED_XP)
             VALUES (?, ?, ?, ?, ?)
-        """, (user_id, reason, current_datetime, xp, calculated_xp))
-
-        # Überprüfen, ob die Person die Zweitaccount-Rolle hat
-        # Ersetze 'GUILD_ID' durch das tatsächliche Feld, falls vorhanden
-        guild = self.bot.get_guild(userrecord['GUILD_ID'])
-        member = guild.get_member(user.id)
-        # Ersetze dies durch die tatsächliche ID der Zweitaccount-Rolle
-        second_account_role_id = 123456789012345678
-        if second_account_role_id not in [role.id for role in member.roles]:
-            # Update EXPERIENCE table
-            cursor = await DatabaseConnectionManager.execute_sql_statement(guild.id, guild.name, "UPDATE EXPERIENCE SET BONUS = BONUS + ? WHERE USERID = ?", (calculated_xp, user_id))
-
+        """, (user_id, reason, current_datetime, xp, calculated_xp*10))
+        
+        guild = self.bot.get_guild(inter.guild.id)
+        member = await guild.fetch_member(user.id)        
+        second_account_role_id = int(os.getenv("SECONDACC_ROLE_ID"))
+        if second_account_role_id not in [role.id for role in member.roles]:            
+            await DatabaseConnectionManager.execute_sql_statement(guild.id, guild.name, "UPDATE EXPERIENCE SET BONUS = BONUS + ? WHERE USERID = ?", (calculated_xp*10, user_id))
         else:
             return
 
         # Send an embed to the user
         embed = disnake.Embed(
-            title="XP Awarded!",
-            description=f"You have been awarded {xp} XP.",
+            title="XP Erhalten!✨",
+            description=f"Du hast **{calculated_xp}** XP erhalten.",
             color=disnake.Color.green()
         )
-        embed.add_field(name="Reason", value=reason, inline=False)
-        embed.add_field(name="Calculated XP",
-                        value=calculated_xp // 10, inline=False)
-        embed.set_footer(text="Keep up the good work!")
+        embed.add_field(name="Grund📝", value=reason, inline=False)
+        embed.set_footer(text="Danke für die Anteilnahme an der Community!")
         await user.send(embed=embed)
+        await self.check_level_up(user, user_id, guild)
 
     @exception_handler
     async def _add_xp_to_voice_channel(self, inter: disnake.ApplicationCommandInteraction, channel_id: int, xp: int, reason: str):
@@ -672,7 +692,7 @@ class Level(commands.Cog):
             return
 
         for member in channel.members:
-            await self.add_bonus_xp(member, xp, reason, inter.guild)
+            await self.add_bonus_xp(inter, member, xp, reason, inter.guild)
 
         await inter.edit_original_response(content=f"XP wurden erfolgreich an alle Benutzer im Voice-Channel {channel.name} vergeben.")
 
@@ -842,5 +862,5 @@ class Level(commands.Cog):
 
         await inter.edit_original_response(embed=embed)
 
-def setupLevel(bot: commands.Bot, rolemanager: RoleManager):
-    bot.add_cog(Level(bot, rolemanager))
+def setupLevel(bot: commands.Bot, rolemanager: RoleManager, channelmanager: ChannelManager):
+    bot.add_cog(Level(bot, rolemanager, channelmanager))

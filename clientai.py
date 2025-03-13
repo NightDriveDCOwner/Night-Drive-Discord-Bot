@@ -34,11 +34,7 @@ class ClientAI(commands.Cog):
 
     @commands.Cog.listener()
     async def on_ready(self):
-        load_dotenv(dotenv_path="envs/settings.env", override=True)
-        self.bot_channel = self.channelmanager.get_channel(self.bot.guilds[0].id,
-                                                           int(os.getenv("BOT_CHANNEL_ID")))
-        self.main_channel = self.channelmanager.get_channel(self.bot.guilds[0].id,
-                                                            int(os.getenv("MAIN_CHANNEL_ID")))
+        load_dotenv(dotenv_path="envs/settings.env", override=True)                
         self.logger.info(f"ClientAI Cog is ready.")
 
     def load_selected_py_files(self):
@@ -196,13 +192,15 @@ class ClientAI(commands.Cog):
         await self.send_long_message(inter.followup, answer)
 
     @commands.Cog.listener()
-    async def on_message(self, message: disnake.Message):
+    async def on_message(self, message: disnake.Message):        
         if self.bot.user.mentioned_in(message) and not message.author.bot and (message.channel.id == 1039179597763313814 or message.channel.id == 854698447247769630):
+            load_dotenv(dotenv_path="envs/settings.env", override=True)
+            bot_channel = self.channelmanager.get_channel(message.guild.id, int(os.getenv("BOT_CHANNEL_ID")))
+            main_channel = self.channelmanager.get_channel(message.guild.id, int(os.getenv("MAIN_CHANNEL_ID")))
             if "@everyone" in message.content:
                 return
-            if message.channel.id != self.main_channel.id and message.channel.id != self.bot_channel.id:
-                # Laden der Umgebungsvariablen mit Überschreiben
-                load_dotenv(dotenv_path="envs/settings.env", override=True)
+            if message.channel.id != main_channel.id and message.channel.id != bot_channel.id:
+                # Laden der Umgebungsvariablen mit Überschreiben                
                 tmp = os.getenv("AI_OPEN")
                 if tmp == "FALSE":
                     return

@@ -16,9 +16,11 @@ from rolehierarchy import rolehierarchy
 from rolemanager import RoleManager
 from dbconnection import DatabaseConnectionManager
 from datetime import timedelta
+from channelmanager import ChannelManager
+from dotenv import load_dotenv
 
 class RoleAssignment(commands.Cog):
-    def __init__(self, bot: commands.Bot, rolemanager: RoleManager):
+    def __init__(self, bot: commands.Bot, rolemanager: RoleManager, channelmanager: ChannelManager):
         self.bot = bot
         self.logger = logging.getLogger("RoleAssignment")
         logging_level = os.getenv("LOGGING_LEVEL", "INFO").upper()
@@ -27,6 +29,7 @@ class RoleAssignment(commands.Cog):
         self.role_hierarchy = rolehierarchy()
         self.team_roles = []
         self.rolemanager = rolemanager
+        self.channelmanager = channelmanager
 
         if not self.logger.handlers:
             formatter = logging.Formatter(
@@ -51,19 +54,7 @@ class RoleAssignment(commands.Cog):
 
     @exception_handler
     @commands.Cog.listener()
-    async def on_ready(self):        
-        self.beichte_channel = self.bot.get_channel(
-            1338586807700557965)  # Replace with your Beichte channel ID
-        self.seelsorge_channel_id = 1068973683361726596
-        self.nsfwrole = self.rolemanager.get_role(
-            self.bot.guilds[0].id, 1165704468449468547)
-        self.seelsorge_role = self.rolemanager.get_role(self.bot.guilds[0].id,
-                                                        1338603963720798248)  # Replace with your Seelsorge role ID
-        self.team_role = self.rolemanager.get_role(self.bot.guilds[0].id,
-                                                   1235534762609872899)  # Replace with your team role ID
-        self.team_channel = self.bot.get_channel(1066798419470983269)
-        self.team_roles = [self.rolemanager.get_role(self.bot.guilds[0].id,
-                                                     role_id) for role_id in self.role_hierarchy.role_hierarchy if self.rolemanager.get_role(self.bot.guilds[0].id, role_id)]
+    async def on_ready(self):                                        
         self.logger.info("RoleAssignment Cog is ready.")
 
     @exception_handler
@@ -206,7 +197,7 @@ class RoleAssignment(commands.Cog):
             result = (await cursor.fetchone())
             if result:
                 options.append(SelectOption(
-                    label=result[0], value=message_type))
+                    label=result[0], value=message_type, default=False))
 
         # Create the dropdown menu for rules
         rules_select = Select(
@@ -217,33 +208,29 @@ class RoleAssignment(commands.Cog):
 
         # Create the dropdown options for server information
         info_options = [
-            SelectOption(label="Levelsystem", emoji="💠" , value="LEVEL"),
+            SelectOption(label="Levelsystem", emoji="💠" , value="LEVEL", default=False),
+            SelectOption(label="Warnsystem", emoji="⚠️", value="WARNSYSTEM", default=False),
             # Add more options as needed
         ]
 
-        # Create the dropdowvn menu for server information
+        # Create the dropdown menu for server information
         info_select = Select(
             placeholder="📢Wähle eine Information...",
             options=info_options,
             custom_id="info_select"
         )
 
-        # Create the button for self roles
-        self_roles_button = Button(label="Self Roles", style=disnake.ButtonStyle.link,
-                                   url="https://discord.com/channels/854698446996766730/1039167130190491709")
+        self_roles_button = Button(label="Self Roles", style=disnake.ButtonStyle.link,url="https://discord.com/channels/854698446996766730/1039167130190491709")
 
-        # Create the button for server team
-        server_team_button = Button(
-            label="Serverteam", style=disnake.ButtonStyle.primary, custom_id="server_team_button")
+        server_team_button = Button(label="Serverteam", style=disnake.ButtonStyle.primary, custom_id="server_team_button")
         
-        server_stats_button = Button(
-            label="Server Statistiken", style=disnake.ButtonStyle.green, custom_id="server_stats_button")
+        server_stats_button = Button(label="Server Statistiken", style=disnake.ButtonStyle.green, custom_id="server_stats_button")
 
         # Create the view and add items
         view = View()
         view.add_item(self_roles_button)
         view.add_item(rules_select)
-        view.add_item(info_select)
+        view.add_item(info_select)        
         # Add the server team button to the view
         view.add_item(server_team_button)
         view.add_item(server_stats_button)
@@ -265,8 +252,7 @@ class RoleAssignment(commands.Cog):
                 member = interaction.guild.get_member(int(discord_id))
                 if member:
                     role_id = self.rolemanager.get_role_id(interaction.guild.id,role_name)
-                    role = interaction.guild.get_role(
-                        role_id) if role_id else None
+                    role = interaction.guild.get_role(role_id) if role_id else None
                     role_mention = role.mention if role else f"<@&{role_id}>"
                     team_members.append(
                         (role_name, f"{member.mention} - {role_mention}"))
@@ -278,9 +264,11 @@ class RoleAssignment(commands.Cog):
         # Extract sorted team member mentions
         sorted_team_members = [member for _, member in team_members]
 
+        team_roles = [self.rolemanager.get_role(interaction.guild.id, role_id) for role_id in self.role_hierarchy.role_hierarchy if self.rolemanager.get_role(interaction.guild.id, role_id)]
         team_roles_mentions = ", ".join(
-            [role.mention for role in self.team_roles if role])
+            [role.mention for role in team_roles if role])
 
+        team_channel = self.channelmanager.get_channel(interaction.guild.id, int(os.getenv("TEAM_CHANNEL_ID")))        
         team_embed = disnake.Embed(
             title="Serverteam",
             description="Hier sind die Mitglieder des Serverteams:",
@@ -291,7 +279,7 @@ class RoleAssignment(commands.Cog):
         team_embed.add_field(name="Teammitglieder", value="\n".join(
             sorted_team_members), inline=False)
         team_embed.add_field(
-            name="Vorstellungen", value=f"Die Vorstellungen der Teammitglieder findest du im {self.team_channel.mention} Channel.", inline=False)
+            name="Vorstellungen", value=f"Die Vorstellungen der Teammitglieder findest du im {team_channel.mention} Channel.", inline=False)
         team_embed.set_footer(
             text="Du kannst jederzeit die Teamrolle pingen, wenn du Hilfe benötigst.")
 
@@ -569,6 +557,25 @@ class RoleAssignment(commands.Cog):
                     await inter.send(embed=embed, ephemeral=True)
                 else:
                     await inter.send("Keine Daten für die ausgewählte Information gefunden.", ephemeral=True)
+            if selected_info == "WARNSYSTEM":
+                # Fetch and send the warn embed
+                cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "SELECT * FROM UNIQUE_MESSAGE WHERE MESSAGETYPE = ?", ("WARNSYSTEM",))
+                result = (await cursor.fetchone())
+
+                if result:
+                    description = result[4].replace('\\n', '\n')
+                    embed = disnake.Embed(
+                        title=result[3],  # Assuming TITLE is the first column
+                        description=description,
+                        color=0x00008B
+                    )
+                    if result[5] != "" and result[5] is not None:
+                        # Assuming FOOTER is the fifth column
+                        embed.set_footer(text=result[5])
+
+                    await inter.send(embed=embed, ephemeral=True)
+                else:
+                    await inter.send("Keine Daten für die ausgewählte Information gefunden.", ephemeral=True)
         elif inter.component.custom_id == "nsfwrules_select":
             await inter.response.defer(ephemeral=True)
             selected_rule = inter.values[0]
@@ -589,6 +596,42 @@ class RoleAssignment(commands.Cog):
                 await inter.send(embed=embed, ephemeral=True)
             else:
                 await inter.send("Keine Daten für die ausgewählte Regel gefunden.", ephemeral=True)
+        if inter.component.custom_id == "rules_select" or inter.component.custom_id == "info_select":
+            options = [SelectOption(label=option.label, value=option.value, default=False) for option in inter.component.options]
+            
+            # Define info_options separately with the correct values
+            info_options = [
+                SelectOption(label="Levelsystem", emoji="💠", value="LEVEL", default=False),
+                SelectOption(label="Warnsystem", emoji="⚠️", value="WARNSYSTEM", default=False),
+                # Add more options as needed
+            ]
+
+            message_types = [f"RULES{i}" for i in range(2, 10)]
+            options = []
+            for message_type in message_types:
+                cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "SELECT TITLE FROM UNIQUE_MESSAGE WHERE MESSAGETYPE = ?", (message_type,))
+                result = (await cursor.fetchone())
+                if result:
+                    options.append(SelectOption(
+                        label=result[0], value=message_type, default=False))
+                                        
+            self_roles_button = Button(label="Self Roles", style=disnake.ButtonStyle.link,url="https://discord.com/channels/854698446996766730/1039167130190491709")
+            
+            server_team_button = Button(label="Serverteam", style=disnake.ButtonStyle.primary, custom_id="server_team_button")
+            
+            server_stats_button = Button(label="Server Statistiken", style=disnake.ButtonStyle.green, custom_id="server_stats_button")
+            
+            await inter.edit_original_response(view=View().add_item(self_roles_button).add_item(server_team_button).add_item(server_stats_button)
+            .add_item(Select(
+                placeholder="📝Wähle eine Regel...",
+                options=options,
+                custom_id="rules_select"                
+            ),
+            ).add_item(Select(
+                placeholder="📢Wähle eine Information...",
+                options=info_options,
+                custom_id="info_select"
+            )))
 
     @exception_handler
     @commands.Cog.listener()
@@ -608,17 +651,17 @@ class RoleAssignment(commands.Cog):
 
     @exception_handler
     async def nsfwrules_button_callback(self, interaction: disnake.Interaction):
-        if self.nsfwrole in interaction.user.roles:
-            await interaction.user.remove_roles(self.nsfwrole)
+        nsfwrole = self.rolemanager.get_role(interaction.guild.id, int(os.getenv("MSFW_ROLE_ID")))
+        if nsfwrole in interaction.user.roles:
+            await interaction.user.remove_roles(nsfwrole)
             await interaction.response.send_message("Die Rolle wurde entfernt und du hast die Regeln nicht mehr akzeptiert. Das gilt nicht rückwirkend.", ephemeral=True)
         else:
-            await interaction.user.add_roles(self.nsfwrole)
+            await interaction.user.add_roles(nsfwrole)
             await interaction.response.send_message("Die Rolle wurde hinzugefügt und du hast die regeln akzeptiert.", ephemeral=True)
 
     @exception_handler
     async def seelsorge_button_callback(self, interaction: disnake.Interaction):
-        seelsorge_role = interaction.guild.get_role(
-            1338603963720798248)  # Replace with your Seelsorge role ID
+        seelsorge_role = self.rolemanager.get_role(interaction.guild.id, int(os.getenv("SEELSORGE_ROLE_ID")))    
         if seelsorge_role in interaction.user.roles:
             await interaction.user.remove_roles(seelsorge_role)
             if not interaction.response.is_done():
@@ -766,30 +809,79 @@ class RoleAssignment(commands.Cog):
 
     @exception_handler
     async def _beichte(self, inter: disnake.ApplicationCommandInteraction, message: str):
-        user_record = await self.globalfile.get_user_record(guild=inter.guild, discordid=inter.user.id)
-        await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "INSERT INTO BEICHTEN (USERID, MESSAGE) VALUES (?, ?)", (user_record['ID'], message))
+        beichte_channel : disnake.TextChannel = self.channelmanager.get_channel(inter.guild, int(os.getenv("BEICHTE_CHANNEL_ID")))  
+        if not beichte_channel:
+            user_record = await self.globalfile.get_user_record(guild=inter.guild, discordid=inter.user.id)
+            await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "INSERT INTO BEICHTEN (USERID, MESSAGE) VALUES (?, ?)", (user_record['ID'], message))
 
-        await inter.response.send_message("Deine Beichte wurde gespeichert und ggfs. für das Team zugänglich.", ephemeral=True)
-        await self.beichte_channel.send(f"Neue Beichte: {message}")
+            await inter.response.send_message("Deine Beichte wurde gespeichert und ggfs. für das Team zugänglich.", ephemeral=True)
+            await beichte_channel.send(f"Neue Beichte: {message}")
+        else:
+            await inter.response.send_message("Der Beichte-Channel wurde nicht gefunden bzw noch nicht gesetzt.", ephemeral=True)
+            await self.logger.error("Beichte-Channel nicht gefunden.")
 
     @exception_handler
     @commands.Cog.listener()
     async def on_message(self, message: disnake.Message):
         if message.author.id != self.bot.user.id:
-            if message.channel.id == self.seelsorge_channel_id:  # Replace with your Seelsorge channel ID
+            load_dotenv(dotenv_path="envs/settings.env", override=True)        
+            seelsorge_channel = self.channelmanager.get_channel(message.guild.id, int(os.getenv("SEELSORGE_CHANNEL_ID")))
+            if message.channel.id == seelsorge_channel:
                 thread: disnake.Thread = await message.channel.create_thread(
                     name=f"{message.author.name}'s Self Reveal",
                     message=message,
-                    auto_archive_duration=1440  # 48 hours
+                    auto_archive_duration=1440
                 )
                 await thread.send(f"{message.author.mention} hat diesen Thread eröffnet.")
 
     @exception_handler
     @commands.Cog.listener()
     async def on_thread_update(self, before: disnake.Thread, after: disnake.Thread):
-        if after.parent_id == self.seelsorge_channel_id and after.archived and not after.locked:
+        seelsorge_channel = self.channelmanager.get_channel(after.guild.id, int(os.getenv("SEELSORGE_CHANNEL_ID")))
+        if after.parent_id == seelsorge_channel and after.archived and not after.locked:
             await after.delete()
 
+    @exception_handler
+    async def _commands_embed(self, inter: disnake.ApplicationCommandInteraction, channel: disnake.TextChannel):
+        embed = disnake.Embed(
+            title="Verfügbare Befehle",
+            description=(
+                "Hier findest du alle Befehle die du benutzen kannst.\n" 
+                "Bitte verwende den Channel <#1345763534482575503> zum ausführen der Commands.\n\n" 
+                "**Allgemeine Befehle**\n"
+                "- `/info` - Zeigt technische Informationen über den Bot und den Server an.\n"
+                "- `/server` - Zeigt Informationen über den Server an.\n"
+                "- `/me` - Zeigt Informationen über deinen Benutzer an.\n"
+                "- `/user_profile` - Zeigt Informationen über einen anderen Benutzer an.\n"
+                "- `/set_birthday` - Damit kannst du dein Geburtstag setzen.\n"
+                "- `/privacy_settings` - Damit stellst du ein wer welche Informationen über dein Profil sehen kann.\n\n"
+                "**Cupid Bot Befehle**\n"
+                "- `/my_anwers` - Zeigt die Antworten welche du bei dem Dating Bot gegeben hast.\n"
+                "- `/edit_answer` - Damit kannst du die Antwort einer Frage bearbeiten.\n"
+                "- `/match_users` - Dort findest du eine Detailierte Ausgabe der Fragenanalyse mit dem angegeben User.\n\n"
+                "**Level Befehle**\n"
+                "- `/top_users` - Zeigt die aktuelle Top Platzierung an. (<#1066777274759786578>)\n\n"                
+                "**Freundschafts Befehle**\n"
+                "- `/friend_add` - Sendet eine Freundschaftsanfrage an einen Benutzer.\n"
+                "- `/friend_remove` - Entfernt einen Benutzer aus deiner Freundesliste.\n"
+                "- `/friend_list` - Zeigt deine Freundesliste an.\n"
+                "- `/show_friend_requests` - Zeigt alle ausstehenden Freundschaftsanfragen an.\n\n"
+                "**Block Befehle**\n"
+                "- `/block` - Blockiert einen Benutzer.\n"
+                "- `/unblock` - Entblockiert einen Benutzer.\n"
+                "- `/blocklist` - Zeigt die Liste der blockierten Benutzer an.\n\n"
+                "**Vorstellungs Befehle**\n"
+                "- `/set_introduction` - Setzt deine Vorstellung.\n"
+                "- `/get_introduction` - Zeigt die Vorstellung eines Benutzers an.\n\n"
+                "**Voice Commands**\n"
+                "- Diese findest du ausgesondert in <#1338259151184330833>.\n"
+            ),
+            color=disnake.Color.blue()
+        )
+        embed.set_author(
+            name=inter.guild.name, icon_url=inter.guild.icon.url if inter.guild.icon else inter.guild.icon.url)
+        await channel.send(embed=embed)
+        await inter.response.send_message("Das Befehls-Embed wurde erstellt.", ephemeral=True)
 
-def setupRoleAssignment(bot: commands.Bot, rolemanager: RoleManager):
-    bot.add_cog(RoleAssignment(bot, rolemanager))
+def setupRoleAssignment(bot: commands.Bot, rolemanager: RoleManager, channelmanager: ChannelManager):
+    bot.add_cog(RoleAssignment(bot, rolemanager, channelmanager))

@@ -12,10 +12,11 @@ from dbconnection import DatabaseConnectionManager
 import os
 from cupid import Cupid
 from rolemanager import RoleManager
+from channelmanager import ChannelManager
 
 
 class Reaction(commands.Cog):
-    def __init__(self, bot: commands.Bot, rolemanager: RoleManager):
+    def __init__(self, bot: commands.Bot, rolemanager: RoleManager, channelmanager: ChannelManager):
         self.bot = bot
         self.user_data = {}
         self.TimerMustReseted = True
@@ -25,6 +26,7 @@ class Reaction(commands.Cog):
         logging_level = os.getenv("LOGGING_LEVEL", "INFO").upper()
         self.logger.setLevel(logging_level)
         self.rolemanager = rolemanager
+        self.channelmanager = channelmanager
 
         if not self.logger.handlers:
             formatter = logging.Formatter(
@@ -34,14 +36,7 @@ class Reaction(commands.Cog):
             self.logger.addHandler(handler)
 
     @commands.Cog.listener()
-    async def on_ready(self):
-        self.messagelog: disnake.TextChannel = self.bot.get_channel(
-            1208770898832658493)
-        self.auditlog: disnake.TextChannel = self.bot.get_channel(
-            1221018527289577582)
-        self.self_reveal_channel = self.bot.get_channel(1061444217076994058)
-        self.botrolle = self.rolemanager.get_role(
-            self.bot.guilds[0].id, 854698446996766738)
+    async def on_ready(self):        
         self.logger.info("Reaction Cog is ready.")
 
     @commands.Cog.listener()
@@ -50,8 +45,9 @@ class Reaction(commands.Cog):
             if message.guild is not None:
                 member = await self.globalfile.get_member_from_user(message.author, message.guild.id)
                 if member and (message.content != "" or len(message.attachments) > 0):
-                    if message.channel.id != 1208770898832658493 and message.channel.id != 1219347644640530553:
-                        if self.botrolle not in member.roles:
+                    if message.channel.id != 1208770898832658493 and message.channel.id != 1219347644640530553:                                
+                        botrolle: disnake.Role = self.rolemanager.get_role(message.guild.id, int(os.getenv("BOT_ROLE_ID")))
+                        if botrolle not in member.roles:
                             avatar_url = member.avatar.url if member.avatar else member.default_avatar.url
                             current_datetime = (await self.globalfile.get_current_time())
                             await self.moderation.check_message_for_blacklist(message)
@@ -75,14 +71,15 @@ class Reaction(commands.Cog):
                                     embed.set_image(
                                         url=message.attachments[0].url)
                                 embeds.append(embed)
-
+                            messagelog: disnake.TextChannel = self.channelmanager.get_channel(message.guild.id, int(os.getenv("MESSAGELOG_CHANNEL_ID")))
                             for embed in embeds:
-                                await self.messagelog.send(embed=embed)
+                                await messagelog.send(embed=embed)
 
-                            if message.attachments and message.channel == self.self_reveal_channel:
+                            self_reveal_channel: disnake.TextChannel = self.channelmanager.get_channel(message.guild.id, int(os.getenv("SELFREVEAL_CHANNEL_ID")))
+                            if message.attachments and message.channel == self_reveal_channel:
                                 # Check if a thread already exists for this user in the self-reveal channel
                                 existing_thread = None
-                                for thread in self.self_reveal_channel.threads:
+                                for thread in self_reveal_channel.threads:
                                     if thread.name == f"{member.name}'s Self Reveal":
                                         # Check if the last message in the thread is from the same user
                                         last_message = await thread.fetch_message(thread.last_message_id)
@@ -91,8 +88,8 @@ class Reaction(commands.Cog):
                                             break
 
                                 if not existing_thread:
-                                    # Create a new thread
-                                    thread: disnake.Thread = await self.self_reveal_channel.create_thread(
+                                    # Create a new thread                                    
+                                    thread: disnake.Thread = await self_reveal_channel.create_thread(
                                         name=f"{member.name}'s Self Reveal",
                                         message=message,
                                         auto_archive_duration=None
@@ -118,8 +115,9 @@ class Reaction(commands.Cog):
     async def on_message_delete(self, message: disnake.Message):
         if message.guild is not None:
             member = await self.globalfile.get_member_from_user(message.author, message.guild.id)
-            if member and message.channel.id != 1208770898832658493 and message.channel.id != 1219347644640530553:
-                if self.botrolle not in member.roles:
+            if member and message.channel.id != 1208770898832658493 and message.channel.id != 1219347644640530553:                        
+                botrolle: disnake.Role = self.rolemanager.get_role(message.guild.id, int(os.getenv("BOT_ROLE_ID")))
+                if botrolle not in member.roles:
                     try:
                         User = await self.globalfile.admin_did_something(disnake.AuditLogAction.message_delete, member, message.guild)
                         avatar_url = member.avatar.url if member.avatar else member.default_avatar.url
@@ -156,12 +154,13 @@ class Reaction(commands.Cog):
 
                         # Aktualisieren der Nachricht in der Datenbank mit DELETED_BY
                         cursor = await DatabaseConnectionManager.execute_sql_statement(message.guild.id, message.guild.name, "UPDATE MESSAGE SET DELETED_BY = ? WHERE MESSAGEID = ? AND CHANNELID = ?", (admin_user_id, message.id, message.channel.id))
-
+                        messagelog: disnake.TextChannel = self.channelmanager.get_channel(message.guild.id, int(os.getenv("MESSAGELOG_CHANNEL_ID")))
                         for embed in embeds:
                             if User.username == member.name:
-                                await self.messagelog.send(embed=embed)
+                                await messagelog.send(embed=embed)
                             else:
-                                await self.auditlog.send(embed=embed)
+                                auditlog: disnake.TextChannel = self.channelmanager.get_channel(message.guild.id, int(os.getenv("AUDITLOG_CHANNEL_ID")))
+                                await auditlog.send(embed=embed)
                     except Exception as e:
                         self.logger.critical(
                             f"Fehler aufgetreten [on_message_delete]: {e}")
@@ -171,7 +170,8 @@ class Reaction(commands.Cog):
         try:
             if before.guild is not None:
                 member = await self.globalfile.get_member_from_user(before.author, before.guild.id)
-                if member and before.channel.id != 1208770898832658493 and before.channel.id != 1219347644640530553 and self.botrolle not in member.roles:
+                botrolle: disnake.Role = self.rolemanager.get_role(after.guild.id, int(os.getenv("BOT_ROLE_ID")))
+                if member and before.channel.id != 1208770898832658493 and before.channel.id != 1219347644640530553 and botrolle not in member.roles:
                     avatar_url = member.avatar.url if member.avatar else member.default_avatar.url
                     current_datetime = (await self.globalfile.get_current_time())
 
@@ -212,8 +212,8 @@ class Reaction(commands.Cog):
                         image_path_values = ""
                     query = f"INSERT INTO MESSAGE (CONTENT, USERID, CHANNELID, MESSAGEID, MESSAGE_BEFORE, INSERT_DATE{image_path_fields}) VALUES (?, ?, ?, ?, ?, ?{image_path_values})"
                     cursor = await DatabaseConnectionManager.execute_sql_statement(after.guild.id, after.guild.name, query, (after.content, userrecord['ID'], after.channel.id, after.id, message_before_id, current_datetime, *image_paths))
-
-                    await self.messagelog.send(embed=embed)
+                    messagelog: disnake.TextChannel = self.channelmanager.get_channel(after.guild.id, int(os.getenv("MESSAGELOG_CHANNEL_ID")))
+                    await messagelog.send(embed=embed)
         except Exception as e:
             self.logger.critical(f"Fehler aufgetreten [on_message_edit]: {e}")
 
@@ -236,7 +236,8 @@ class Reaction(commands.Cog):
                         f"Rolle entfernt: {role.name} von {after.name} ({after.id})")
 
                 current_datetime = (await self.globalfile.get_current_time())
-                if self.auditlog:
+                auditlog: disnake.TextChannel = self.channelmanager.get_channel(after.guild.id, int(os.getenv("AUDITLOG_CHANNEL_ID")))
+                if auditlog:
                     if added_roles or removed_roles:
                         embed = disnake.Embed(
                             title="Rollenaktualisierung", color=0x4169E1)
@@ -252,11 +253,11 @@ class Reaction(commands.Cog):
                                 [role.mention for role in removed_roles]), inline=False)
                         embed.set_footer(
                             text=f"ID: {before.id} - heute um {current_datetime.strftime('%H:%M:%S')} Uhr")
-                        await self.auditlog.send(embed=embed)
+                        await auditlog.send(embed=embed)
 
         except Exception as e:
             self.logger.critical(f"Fehler aufgetreten [on_member_update]: {e}")
 
 
-def setupReaction(bot: commands.Bot, rolemanager: RoleManager):
-    bot.add_cog(Reaction(bot, rolemanager))
+def setupReaction(bot: commands.Bot, rolemanager: RoleManager, channelmanager: ChannelManager):
+    bot.add_cog(Reaction(bot, rolemanager, channelmanager))

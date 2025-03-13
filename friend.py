@@ -39,15 +39,13 @@ class Friend(commands.Cog):
             self.logger.addHandler(handler)
 
     @exception_handler
-    async def on_ready(self):
-        load_dotenv(dotenv_path="envs/settings.env", override=True)
-        self.botchannel = self.channelmanager.get_channel(self.bot.guilds[0].id, int(os.getenv("BOT_CHANNEL_ID")))
-        self.team_role = self.rolemanager.get_role(self.bot.guilds[0].id, int(os.getenv("TEAM_ROLE")))
+    async def on_ready(self):                
         self.logger.info("Friend Cog is ready.")                
          
     @exception_handler
     async def _friend_add(self, inter: disnake.ApplicationCommandInteraction, user: disnake.Member):
-        if inter.channel == self.botchannel:
+        botchannel = self.channelmanager.get_channel(inter.guild.id, int(os.getenv("BOT_CHANNEL_ID")))
+        if inter.channel == botchannel:
             if inter.user.id == user.id:
                 await inter.response.send_message("Du kannst dich nicht selbst hinzufügen.", ephemeral=True)
                 return
@@ -97,7 +95,7 @@ class Friend(commands.Cog):
                 except disnake.Forbidden:
                     self.logger.warning(f"Could not send a friend request message to {user.name}#{user.discriminator}.")
         else:
-            await inter.response.send_message(f"Du kannst nur Freundschaftsanfragen in {self.botchannel.mention} senden.", ephemeral=True)
+            await inter.response.send_message(f"Du kannst nur Freundschaftsanfragen in {botchannel.mention} senden.", ephemeral=True)
 
     async def _friend_remove(self, inter: disnake.ApplicationCommandInteraction, user: disnake.Member):
         user_record = await self.globalfile.get_user_record(guild=inter.guild, discordid=inter.user.id)
@@ -239,7 +237,8 @@ class Friend(commands.Cog):
                 is_blocked = await self.globalfile.is_user_blocked(user_record["ID"], tmp_user["ID"], inter.guild)
 
                 def can_view(setting: str) -> bool:
-                    if self.team_role in inter.user.roles:
+                    if team_role is None: team_role = self.rolemanager.get_role(inter.guild.id, int(os.getenv("TEAM_ROLE_ID")))
+                    if team_role in inter.user.roles:
                         return True                        
 
                     return (

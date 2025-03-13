@@ -1,6 +1,7 @@
 import disnake
 import time
 import os
+import re
 import dotenv
 from disnake.ext import commands
 from globalfile import Globalfile
@@ -17,10 +18,12 @@ from fuzzywuzzy import fuzz
 import re
 import datetime
 from datetime import datetime
+from channelmanager import ChannelManager
+from dotenv import load_dotenv
 
 
 class Moderation(commands.Cog):
-    def __init__(self, bot: commands.Bot, rolemanager: RoleManager):
+    def __init__(self, bot: commands.Bot, rolemanager: RoleManager, channelmanager: ChannelManager):
         self.bot = bot
         self.message = disnake.message
         self.userid = int
@@ -32,6 +35,7 @@ class Moderation(commands.Cog):
         self.team_roles = [role for role in self.role_hierarchy.role_hierarchy]
         self.role_cache = {}
         self.rolemanager = rolemanager
+        self.channelmanager = channelmanager
         self.mod_channel = None
 
         if not self.logger.handlers:
@@ -44,9 +48,7 @@ class Moderation(commands.Cog):
     @commands.Cog.listener()
     async def on_ready(self):     
         for guild in self.bot.guilds:
-            await self.sync_team_members(guild)  
-        self.mod_channel = self.bot.guilds[0].get_channel(
-            1090588808216596490)  # Set the channel ID
+            await self.sync_team_members(guild)          
         self.logger.info("Moderation Cog is ready.")
         
 
@@ -167,7 +169,7 @@ class Moderation(commands.Cog):
                        warn_level: int = commands.Param(name="warnstufe", description="Warnstufe (1-3) | Default = 1 wenn warn_level = True", default=1)):
         """Timeout einen Benutzer für eine bestimmte Dauer und optional eine Warnung erstellen."""
         await inter.response.defer(ephemeral=True)
-
+        mod_channel : disnake.TextChannel = self.channelmanager.get_channel(inter.guild.id, int(os.getenv("MOD_CHANNEL_ID"))) 
         # Berechnen der Timeout-Dauer
         duration_seconds = await self.globalfile.convert_duration_to_seconds(duration)
         if duration_seconds < 60 or duration_seconds > 28 * 24 * 60 * 60:
@@ -187,8 +189,8 @@ class Moderation(commands.Cog):
             embed.add_field(name="Grund", value=reason, inline=False)
             embed.add_field(name="Dauer", value=duration, inline=True)
             embed.add_field(name="Ende des Timeouts", value=timeout_end_time.strftime(
-                '%Y-%m-%d %H:%M:%S'), inline=True)
-            await self.mod_channel.send(embed=embed)
+                '%Y-%m-%d %H:%M:%S'), inline=True)            
+            await mod_channel.send(embed=embed)
 
             # Speichere den Timeout in der Datenbank
             current_datetime = (await self.globalfile.get_current_time()).strftime('%Y-%m-%d %H:%M:%S')
@@ -212,14 +214,14 @@ class Moderation(commands.Cog):
                 reason=reason,
                 level=warn_level
             )
-            await inter.edit_original_response(content=f"Timeout und Warnung erfolgreich erstellt. Logged in: {self.mod_channel.mention}")
-        await inter.edit_original_response(content=f"Timeout erfolgreich erstellt. Logged in: {self.mod_channel.mention}")
+            await inter.edit_original_response(content=f"Timeout und Warnung erfolgreich erstellt. Logged in: {mod_channel.mention}")
+        await inter.edit_original_response(content=f"Timeout erfolgreich erstellt. Logged in: {mod_channel.mention}")
 
     @exception_handler
     async def _timeout_remove(self, inter: disnake.ApplicationCommandInteraction, timeout_id: int, reason: str = commands.Param(name="begründung", description="Grund für das Entfernen des Timeouts", default="Kein Grund angegeben")):
         """Entfernt einen Timeout basierend auf der Timeout ID."""
         await inter.response.defer(ephemeral=True)
-
+        mod_channel : disnake.TextChannel = self.channelmanager.get_channel(inter.guild.id, int(os.getenv("MOD_CHANNEL_ID"))) 
         cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "SELECT * FROM TIMEOUT WHERE ID = ?", (timeout_id,))
         timeout_record = (await cursor.fetchone())
 
@@ -242,8 +244,8 @@ class Moderation(commands.Cog):
             embed.set_author(
                 name=user.name, icon_url=user.avatar.url if user.avatar else user.default_avatar.url)
             embed.add_field(name="Grund", value=reason, inline=False)
-            await self.mod_channel.send(embed=embed)
-            await inter.edit_original_response(content=f"Timeout erfolgreich entfernt. Logged in: {self.mod_channel.mention}")
+            await mod_channel.send(embed=embed)
+            await inter.edit_original_response(content=f"Timeout erfolgreich entfernt. Logged in: {mod_channel.mention}")
         except disnake.Forbidden:
             await inter.edit_original_response(content=f"Ich habe keine Berechtigung, den Timeout für {user.mention} zu entfernen.")
         except disnake.HTTPException as e:
@@ -253,6 +255,7 @@ class Moderation(commands.Cog):
     async def _warn_add(self, inter: disnake.ApplicationCommandInteraction, user: disnake.User, reason: str, level: int = 1, proof: disnake.Attachment = None, show: str = "True"):
         """Erstellt eine Warnung für einen Benutzer."""
         # Überprüfe, ob ein Attachment in der Nachricht vorhanden ist
+        mod_channel : disnake.TextChannel = self.channelmanager.get_channel(inter.guild.id, int(os.getenv("MOD_CHANNEL_ID"))) 
         if inter:
             if not inter.response.is_done():
                 await inter.response.defer(ephemeral=True)
@@ -308,63 +311,57 @@ class Moderation(commands.Cog):
         if image_path:
             embed.add_field(name="Bildpfad", value=image_path, inline=False)
         embed.set_footer(text=f"ID: {user.id} - heute um {((await self.globalfile.get_current_time()).strftime('%H:%M:%S'))} Uhr")
-        await self.mod_channel.send(embed=embed)
+        await mod_channel.send(embed=embed)
         if inter:
-            await inter.edit_original_response(content=f"Warnung erfolgreich erstellt. Logged in: {self.mod_channel.mention}")
+            await inter.edit_original_response(content=f"Warnung erfolgreich erstellt. Logged in: {mod_channel.mention}")
 
     @exception_handler
     async def _warn_delete(self, inter: disnake.ApplicationCommandInteraction, caseid: int, reason: str):
         """Löscht eine Warn basierend auf der Warn ID und setzt das Warnlevel zurück."""
         await inter.response.defer(ephemeral=True)
-        try:
+        mod_channel : disnake.TextChannel = self.channelmanager.get_channel(inter.guild.id, int(os.getenv("MOD_CHANNEL_ID"))) 
+        cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "SELECT * FROM WARN WHERE ID = ?", (caseid,))
+        warn = (await cursor.fetchone())
 
-            cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "SELECT * FROM WARN WHERE ID = ?", (caseid,))
-            warn = (await cursor.fetchone())
-
-            if warn is None:
-                embed = disnake.Embed(
-                    title="Warn nicht gefunden", description=f"Es gibt keine Warnung mit der ID {caseid}.", color=disnake.Color.red())
-                await inter.edit_original_response(embed=embed)
-                self.logger.info(f"Warn not found: {caseid}")
-                return
-            
-            if warn[6]:
-                await inter.edit_original_response(content=f"Warnung mit der ID {caseid} wurde bereits gelöscht.")
-                return
-
-            user_record = await self.globalfile.get_user_record(guild=inter.guild, discordid=inter.author.id)
-            # Assuming USERID is the second column in WARN table
-            user_id = warn[1]
-            # Assuming LEVEL is the fifth column in WARN table
-            warn_level = warn[4]
-
-            # Reduziere das Warnlevel des Benutzers
-            cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "SELECT WARNLEVEL FROM USER WHERE ID = ?", (user_id,))
-            current_warn_level = (await cursor.fetchone())[0]
-            new_warn_level = max(0, current_warn_level - warn_level)
-            cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "UPDATE USER SET WARNLEVEL = ? WHERE ID = ?", (new_warn_level, user_id))
-
-            # Lösche die Warnung
-            cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "UPDATE WARN SET REMOVED = 1, REMOVED_BY = ?, REMOVED_REASON = ? WHERE ID = ?", (user_record['ID'], reason, caseid))
+        if warn is None:
             embed = disnake.Embed(
-                title="Warn gelöscht", description=f"Warn mit der ID {caseid} wurde gelöscht und das Warnlevel wurde angepasst.", color=disnake.Color.green())
-            self.logger.info(
-                f"Warn deleted: {caseid}, Warnlevel adjusted for user {user_id} to {new_warn_level} by {inter.author.name} (ID: {inter.author.id}).")
-            await self.mod_channel.send(embed=embed)
-            await inter.edit_original_response(content=f"Warnung erfolgreich gelöscht. Logged in: {self.mod_channel.mention}")
-            user_record = await self.globalfile.get_user_record(guild=inter.guild, user_id=user_id)
-            user = await self.bot.fetch_user(int(user_record['DISCORDID']))
-            dm_embed = disnake.Embed(
-                title="Warnung entfernt",
-                description=f"Deine Warnung mit der ID {caseid} wurde entfernt und dein Warnlevel wurde angepasst.",
-                color=disnake.Color.green()
-            )
-            await user.send(embed=dm_embed)
-        except sqlite3.Error as e:
-            embed = disnake.Embed(
-                title="Fehler", description=f"Ein Fehler ist aufgetreten: {e}", color=disnake.Color.red())
+                title="Warn nicht gefunden", description=f"Es gibt keine Warnung mit der ID {caseid}.", color=disnake.Color.red())
             await inter.edit_original_response(embed=embed)
-            self.logger.critical(f"An error occurred: {e}")
+            self.logger.info(f"Warn not found: {caseid}")
+            return
+        
+        if warn[6]:
+            await inter.edit_original_response(content=f"Warnung mit der ID {caseid} wurde bereits gelöscht.")
+            return
+
+        user_record = await self.globalfile.get_user_record(guild=inter.guild, discordid=inter.author.id)
+        # Assuming USERID is the second column in WARN table
+        user_id = warn[1]
+        # Assuming LEVEL is the fifth column in WARN table
+        warn_level = warn[4]
+
+        # Reduziere das Warnlevel des Benutzers
+        cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "SELECT WARNLEVEL FROM USER WHERE ID = ?", (user_id,))
+        current_warn_level = (await cursor.fetchone())[0]
+        new_warn_level = max(0, current_warn_level - warn_level)
+        cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "UPDATE USER SET WARNLEVEL = ? WHERE ID = ?", (new_warn_level, user_id))
+
+        # Lösche die Warnung
+        cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "UPDATE WARN SET REMOVED = 1, REMOVED_BY = ?, REMOVED_REASON = ? WHERE ID = ?", (user_record['ID'], reason, caseid))
+        embed = disnake.Embed(
+            title="Warn gelöscht", description=f"Warn mit der ID {caseid} wurde gelöscht und das Warnlevel wurde angepasst.", color=disnake.Color.green())
+        self.logger.info(
+            f"Warn deleted: {caseid}, Warnlevel adjusted for user {user_id} to {new_warn_level} by {inter.author.name} (ID: {inter.author.id}).")
+        await mod_channel.send(embed=embed)
+        await inter.edit_original_response(content=f"Warnung erfolgreich gelöscht. Logged in: {self.mod_channel.mention}")
+        user_record = await self.globalfile.get_user_record(guild=inter.guild, user_id=user_id)
+        user = await self.bot.fetch_user(int(user_record['DISCORDID']))
+        dm_embed = disnake.Embed(
+            title="Warnung entfernt",
+            description=f"Deine Warnung mit der ID {caseid} wurde entfernt und dein Warnlevel wurde angepasst.",
+            color=disnake.Color.green()
+        )
+        await user.send(embed=dm_embed)
 
     @exception_handler
     async def _ban(self,
@@ -377,22 +374,26 @@ class Moderation(commands.Cog):
                        name="dauer", description="Dauer des Bans in Sek., Min., Std., Tagen oder Jahre.(Bsp.: 0s0m0h0d0j) Nichts angegeben = Dauerhaft", default="0s"),
                    delete_days: int = commands.Param(
                        name="geloeschte_nachrichten", description="Anzahl der Tage, für die Nachrichten des Benutzers gelöscht werden sollen. (0-7, Default = 0)", default=0),
-                   proof: disnake.Attachment = commands.Param(name="beweis", description="Ein Bild als Beweis für den Ban und zur Dokumentation", default=None)):
-        """Banne einen Benutzer und speichere ein Bild als Beweis."""
+                   proof: disnake.Attachment = commands.Param(name="beweis", description="Ein Bild als Beweis für den Ban und zur Dokumentation", default=None),
+                   username: str = commands.Param(name="username", description="Hier kannst du den Benutzernamen angeben, falls die UserID nicht bekannt ist.", default=""),
+                   discordid: int = commands.Param(name="discordid", description="Hier kannst du die UserID unserer Datenbank angeben.", default=0)):
+        """Banne einen Benutzer und speichere ein Bild als Beweis."""        
         await inter.response.defer(ephemeral=True)  # Verzögere die Interaktion
+        mod_channel : disnake.TextChannel = self.channelmanager.get_channel(inter.guild.id, int(os.getenv("MOD_CHANNEL_ID"))) 
         image_path = ""
-        try:
-            # Berechnen der Banndauer
-            if duration != "0s":
-                duration_seconds = await self.globalfile.convert_duration_to_seconds(duration)
-                ban_end_time = (await self.globalfile.get_current_time()) + timedelta(seconds=duration_seconds)
-                ban_end_timestamp = int(ban_end_time.timestamp())
-                ban_end_formatted = ban_end_time.strftime('%Y-%m-%d %H:%M:%S')
-            else:
-                duration_seconds = await self.globalfile.convert_duration_to_seconds(duration)
-                ban_end_timestamp = None
-                ban_end_formatted = "Unbestimmt"
 
+        # Berechnen der Banndauer
+        if duration != "0s":
+            duration_seconds = await self.globalfile.convert_duration_to_seconds(duration)
+            ban_end_time = (await self.globalfile.get_current_time()) + timedelta(seconds=duration_seconds)
+            ban_end_timestamp = int(ban_end_time.timestamp())
+            ban_end_formatted = ban_end_time.strftime('%Y-%m-%d %H:%M:%S')
+        else:
+            duration_seconds = await self.globalfile.convert_duration_to_seconds(duration)
+            ban_end_timestamp = None
+            ban_end_formatted = "Unbestimmt"
+        
+        if member:
             userrecord = await self.globalfile.get_user_record(guild=inter.guild, discordid=member.id)
 
             cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "SELECT * FROM BAN WHERE USERID = ?", (userrecord['ID'],))
@@ -445,10 +446,9 @@ class Moderation(commands.Cog):
                     user_id = userrecord['ID']
                     userrecord = await self.globalfile.get_user_record(guild=inter.guild, discordid=member.id)
                     current_datetime = (await self.globalfile.get_current_time()).strftime('%Y-%m-%d %H:%M:%S')
-                    cursor.execute(
+                    await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name,
                         "INSERT INTO BAN (USERID, REASON, BANNED_TO, DELETED_DAYS, IMAGEPATH, INSERT_DATE, BANNED_BY) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                        (userrecord['ID'], reason, ban_end_formatted, str(
-                            delete_days), image_path, current_datetime, user_id)
+                        (userrecord['ID'], reason, ban_end_formatted, str(delete_days), image_path, current_datetime, user_id)
                     )
 
                     embed = disnake.Embed(
@@ -471,16 +471,29 @@ class Moderation(commands.Cog):
                         # Setze das Bild des Beweises, falls vorhanden
                         embed.set_image(url=proof.url)
 
-                    await self.mod_channel.send(embed=embed)
-                    await inter.edit_original_response(content=f"Benutzer erfolgreich gebannt. Logged in: {self.mod_channel.mention}")
+                    await mod_channel.send(embed=embed)
+                    await inter.edit_original_response(content=f"Benutzer erfolgreich gebannt. Logged in: {mod_channel.mention}")
             else:
                 await inter.edit_original_response(content=f"{member.mention} ist bereits gebannt! Ban nicht möglich.")
                 self.logger.info(
                     f"User {member.id} ban not possible. User is already banned.")
-        except disnake.ext.commands.errors.MemberNotFound:
-            await inter.edit_original_response(content="Der angegebene Benutzer wurde nicht gefunden.")
-            self.logger.error(
-                f"MemberNotFound: Der Benutzer mit der ID {member.id} wurde nicht gefunden.")
+        else:
+            if username:
+                userrecord = await self.globalfile.get_user_record(guild=inter.guild, username=username)
+            elif discordid: 
+                userrecord = await self.globalfile.get_user_record(guild=inter.guild, discordid=discordid)
+            else:
+                await inter.edit_original_response(content="Bitte gib einen Benutzer, einen Benutzernamen oder eine UserID an.")
+                return
+
+            current_datetime = (await self.globalfile.get_current_time()).strftime('%Y-%m-%d %H:%M:%S')
+            await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name,
+                "INSERT INTO BAN_WAIT (USERID, REASON, BANNED_TO, DELETE_DAYS, IMAGEPATH, INSERT_DATE, BANNED_BY) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (userrecord['ID'], reason, ban_end_formatted, str(delete_days), image_path, current_datetime, inter.user.id)
+            )
+
+            await inter.edit_original_response(content="Benutzer nicht auf dem Server gefunden. Informationen wurden in separater Tabelle gespeichert. User wird beim nächsten join gebannt.")
+            self.logger.info(f"User {discordid} not found on server. Information saved in OFFLINE_BANS table.")
 
     @exception_handler
     async def _unban(self, inter: disnake.ApplicationCommandInteraction,
@@ -491,42 +504,39 @@ class Moderation(commands.Cog):
                      reason: str = commands.Param(name="begruendung", description="Bitte gebe eine Begründung für den Unban an.", default="Kein Grund angegeben")):
         """Entbanne einen Benutzer von diesem Server."""
         await inter.response.defer(ephemeral=True)  # Verzögere die Interaktion und mache sie nur für den Benutzer sichtbar
-        try:
-            userrecord = await self.globalfile.get_user_record(guild=inter.guild, user_id=userid, username=username)
-            user = await self.bot.fetch_user(int(userrecord['DISCORDID']))
+        mod_channel : disnake.TextChannel = self.channelmanager.get_channel(inter.guild.id, int(os.getenv("MOD_CHANNEL_ID"))) 
+        userrecord = await self.globalfile.get_user_record(guild=inter.guild, user_id=userid, username=username)
+        user = await self.bot.fetch_user(int(userrecord['DISCORDID']))
 
-            # Überprüfen, ob ein offener Ban existiert
+        # Überprüfen, ob ein offener Ban existiert
 
-            cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "SELECT * FROM BAN WHERE USERID = ?", (str(userrecord['ID']),))
-            bans = await cursor.fetchall()
-            ban_found = False
-            for ban in bans:
-                if not ban[6] == "1":  # Assuming 'Unban' is a column in your BANS table
-                    ban_found = True
+        cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "SELECT * FROM BAN WHERE USERID = ?", (str(userrecord['ID']),))
+        bans = await cursor.fetchall()
+        ban_found = False
+        for ban in bans:
+            if not ban[6] == "1":  # Assuming 'Unban' is a column in your BANS table
+                ban_found = True
 
-            if not ban_found:
-                await inter.edit_original_response(content=f"{user.mention} ist nicht gebannt! Unban nicht möglich.")
-                self.logger.info(
-                    f"User {user.id} unban not possible. User is not banned.")
-            else:
-                guild = inter.guild
-                await guild.unban(user)
-                teamuser_record = await self.globalfile.get_user_record(guild=inter.guild, discordid=inter.author.id)
-                cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "UPDATE BAN SET UNBANNED = 1, UNBANNED_BY = ?, UNBANNED_REASON = ? WHERE USERID = ? AND UNBANNED = 0", (teamuser_record['ID'], reason, str(userrecord['ID'])))
+        if not ban_found:
+            await inter.edit_original_response(content=f"{user.mention} ist nicht gebannt! Unban nicht möglich.")
+            self.logger.info(
+                f"User {user.id} unban not possible. User is not banned.")
+        else:
+            guild = inter.guild
+            await guild.unban(user)
+            teamuser_record = await self.globalfile.get_user_record(guild=inter.guild, discordid=inter.author.id)
+            cursor = await DatabaseConnectionManager.execute_sql_statement(inter.guild.id, inter.guild.name, "UPDATE BAN SET UNBANNED = 1, UNBANNED_BY = ?, UNBANNED_REASON = ? WHERE USERID = ? AND UNBANNED = 0", (teamuser_record['ID'], reason, str(userrecord['ID'])))
 
-                embed = disnake.Embed(
-                    title="Benutzer entbannt", description=f"{user.mention} wurde erfolgreich entbannt!", color=disnake.Color.green())
-                avatar_url = user.avatar.url if user.avatar else user.default_avatar.url
-                embed.set_author(name=user.name, icon_url=avatar_url)
-                embed.set_footer(
-                    text=f"User ID: {userrecord['DISCORDID']} | {userrecord['ID']}")
+            embed = disnake.Embed(
+                title="Benutzer entbannt", description=f"{user.mention} wurde erfolgreich entbannt!", color=disnake.Color.green())
+            avatar_url = user.avatar.url if user.avatar else user.default_avatar.url
+            embed.set_author(name=user.name, icon_url=avatar_url)
+            embed.set_footer(
+                text=f"User ID: {userrecord['DISCORDID']} | {userrecord['ID']}")
 
-                await self.mod_channel.send(embed=embed)
-                await inter.edit_original_response(content=f"Benutzer erfolgreich entbannt. Logged in: {self.mod_channel.mention}")
-                self.logger.info(f"User {user.id} unbanned.")
-        except Exception as e:
-            self.logger.critical(f"An error occurred: {e}")
-            await inter.edit_original_response(content=f"Ein Fehler ist aufgetreten: {e}")
+            await mod_channel.send(embed=embed)
+            await inter.edit_original_response(content=f"Benutzer erfolgreich entbannt. Logged in: {mod_channel.mention}")
+            self.logger.info(f"User {user.id} unbanned.")
 
     @exception_handler
     async def _kick(self,
@@ -538,6 +548,7 @@ class Moderation(commands.Cog):
                     proof: disnake.Attachment = commands.Param(name="beweis", description="Ein Bild als Beweis für den Kick und zur Dokumentation", default=None)):
         """Kicke einen Benutzer und speichere ein Bild als Beweis."""
         await inter.response.defer(ephemeral=True)  # Verzögere die Interaktion
+        mod_channel : disnake.TextChannel = self.channelmanager.get_channel(inter.guild.id, int(os.getenv("MOD_CHANNEL_ID"))) 
         image_path = ""
 
         try:
@@ -570,8 +581,8 @@ class Moderation(commands.Cog):
                 # Setze das Bild des Beweises, falls vorhanden
                 embed.set_image(url=proof.url)
 
-            await self.mod_channel.send(embed=embed)
-            await inter.edit_original_response(content=f"Benutzer erfolgreich gekickt. Logged in: {self.mod_channel.mention}")
+            await mod_channel.send(embed=embed)
+            await inter.edit_original_response(content=f"Benutzer erfolgreich gekickt. Logged in: {mod_channel.mention}")
 
     @exception_handler
     async def _delete_messages_after(self, inter: disnake.ApplicationCommandInteraction,
@@ -637,8 +648,7 @@ class Moderation(commands.Cog):
 
             # Aktualisiere die Datenbank für hinzugefügte Rollen
             for role_id in added_roles:
-                role_name = self.rolemanager.get_role_name(
-                    after.guild.id, role_id)
+                role_name = self.rolemanager.get_role_name(after.guild.id, role_id)
                 if role_name and role_name in self.team_roles:
                     await DatabaseConnectionManager.execute_sql_statement(after.guild.id, after.guild.name, """
                         INSERT INTO TEAM_MEMBERS (USERID, ROLE, TEAM_ROLE)
@@ -651,8 +661,7 @@ class Moderation(commands.Cog):
 
             # Aktualisiere die Datenbank für entfernte Rollen
             for role_id in removed_roles:
-                role_name = self.rolemanager.get_role_name(
-                    after.guild.id, role_id)
+                role_name = self.rolemanager.get_role_name(after.guild.id, role_id)
                 if role_name and role_name in self.team_roles:
                     cursor = await DatabaseConnectionManager.execute_sql_statement(after.guild.id, after.guild.name, """
                         DELETE FROM TEAM_MEMBERS WHERE USERID = ? AND ROLE = ?
@@ -676,8 +685,7 @@ class Moderation(commands.Cog):
         for guild in self.bot.guilds:
             for member in guild.members:
                 for role in member.roles:
-                    role_name = self.rolemanager.get_role_name(
-                        guild.id, role.id)
+                    role_name = self.rolemanager.get_role_name(guild.id, role.id)
                     if role_name and role_name in self.team_roles:
                         # Fetch USERID from USER table using get_user_record
                         user_record = await self.globalfile.get_user_record(guild=guild, discordid=member.id)
@@ -711,6 +719,5 @@ class Moderation(commands.Cog):
             self.logger.info(
                 f"Role {role_name} removed from user {user_id} in TEAM_MEMBERS table.")
 
-
-def setupModeration(bot: commands.Bot, rolemanager: RoleManager):
-    bot.add_cog(Moderation(bot, rolemanager))
+def setupModeration(bot: commands.Bot, rolemanager: RoleManager, channelmanager: ChannelManager):
+    bot.add_cog(Moderation(bot, rolemanager, channelmanager))

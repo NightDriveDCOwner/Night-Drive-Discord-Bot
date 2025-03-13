@@ -79,7 +79,7 @@ class AuditLog(commands.Cog):
             handler.setFormatter(formatter)
             self.logger.addHandler(handler)
 
-        load_dotenv(dotenv_path="envs/settings.env")
+        load_dotenv(dotenv_path="envs/settings.env", override=True)
 
         self.user_data = {}
         self.TimerMustReseted = True
@@ -87,10 +87,7 @@ class AuditLog(commands.Cog):
             'UserRecord', ['user', 'username', 'userid'])
 
     @commands.Cog.listener()
-    async def on_ready(self):
-        self.auditlog_channel = self.channelmanager.get_channel(self.bot.guilds[0].id,
-                                                                int(os.getenv("AUDITLOG_CHANNEL_ID")))        
-        self.logger.debug(f"Loaded channel ID: {self.auditlog_channel.id}")
+    async def on_ready(self):    
         self.logger.info("AuditLog Cog is ready.")
 
     async def send_audit_log_embed(self, action: disnake.AuditLogAction, entry: disnake.AuditLogEntry):
@@ -158,6 +155,7 @@ class AuditLog(commands.Cog):
 
         embed.add_field(name="Changes", value=changes_str, inline=False)
         try:
+            self.auditlog_channel : disnake.TextChannel = self.channelmanager.get_channel(entry.guild, int(os.getenv("AUDITLOG_CHANNEL_ID")))        
             if self.auditlog_channel:
                 await self.auditlog_channel.send(embed=embed)
         except Exception as e:

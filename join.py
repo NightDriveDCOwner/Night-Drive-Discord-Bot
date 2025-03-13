@@ -14,16 +14,20 @@ import requests
 import random
 from exceptionhandler import exception_handler
 from rolemanager import RoleManager
+from moderation import Moderation
+from channelmanager import ChannelManager
 
 
 class Join(commands.Cog):
-    def __init__(self, bot: commands.Bot, rolemanager: RoleManager):
+    def __init__(self, bot: commands.Bot, rolemanager: RoleManager, channelmanager: ChannelManager):
         self.bot = bot
         self.logger = logging.getLogger("Join")
         self.globalfile : Globalfile = self.bot.get_cog('Globalfile')
         self.invites_before_join = {}
         self.stats_channels = {}
         self.rolemanager = rolemanager
+        self.channelmanager = channelmanager
+        self.moderation: Moderation = self.bot.get_cog('Moderation') 
 
         if not self.logger.handlers:
             formatter = logging.Formatter(
@@ -31,6 +35,41 @@ class Join(commands.Cog):
             handler = logging.StreamHandler()
             handler.setFormatter(formatter)
             self.logger.addHandler(handler)
+
+    @exception_handler
+    @commands.Cog.listener()
+    async def on_ready(self):                       
+        def count_total_lines(directory):
+            total_lines = 0
+            for root, _, files in os.walk(directory):
+                for file in files:
+                    if file.endswith('.py'):
+                        with open(os.path.join(root, file), 'r', encoding='utf-8') as f:
+                            total_lines += sum(1 for _ in f)
+            return total_lines
+
+        self.invites_before_join = await self.get_guild_invites()
+        self.bot.add_view(await self.create_copy_mention_view())
+        await self.bot.change_presence(activity=disnake.Activity(type=disnake.ActivityType.watching, name="über die Spieler"))
+        await self.create_stats_category()
+        await self.update_stats()
+        total_lines = count_total_lines(os.getcwd())
+        self.logger.info(f"Total lines of code: {total_lines}")
+
+        # Überprüfen Sie alle Mitglieder beim Start des Bots
+        for guild in self.bot.guilds:
+            for member in guild.members:
+                if not await self.is_member_in_user_table(member.id):
+                    await self.check_member_update(member)
+                    await self.process_member_join(member)
+                else:
+                    cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT LEAVED FROM USER WHERE DISCORDID = ?", (str(member.id),))
+                    leaved_status = (await cursor.fetchone())
+                    if leaved_status and leaved_status[0] == 1:
+                        await self.check_member_update(member)
+                        await self.process_member_join(member)
+        
+        self.logger.info("Join Cog is ready.")	
 
     async def get_random_anime_gif(self):
         # Abrufen des API-Schlüssels aus der .env-Datei
@@ -90,51 +129,6 @@ class Join(commands.Cog):
                 "401 Unauthorized: Überprüfen Sie Ihren API-Schlüssel.")
         else:
             self.logger.error(f"Fehler bei der Anfrage: {r.status_code}")
-
-    @exception_handler
-    @commands.Cog.listener()
-    async def on_ready(self):
-        # Ersetze dies durch die tatsächliche ID der "Neuer Benutzer"-Rolle
-        self.new_member_ping = self.rolemanager.get_role(
-            self.bot.guilds[0].id, 1339347572506234890)
-        # Ersetze dies durch die tatsächliche ID der
-        self.underage_role = self.rolemanager.get_role(
-            self.bot.guilds[0].id, 1300559732905607269)
-
-        def count_total_lines(directory):
-            total_lines = 0
-            for root, _, files in os.walk(directory):
-                for file in files:
-                    if file.endswith('.py'):
-                        with open(os.path.join(root, file), 'r', encoding='utf-8') as f:
-                            total_lines += sum(1 for _ in f)
-            return total_lines
-
-        self.invites_before_join = await self.get_guild_invites()
-        self.bot.add_view(await self.create_copy_mention_view())
-        await self.bot.change_presence(activity=disnake.Activity(type=disnake.ActivityType.watching, name="über die Spieler"))
-        await self.create_stats_category()
-        await self.update_stats()
-        total_lines = count_total_lines(os.getcwd())
-        self.logger.info(f"Total lines of code: {total_lines}")
-        if self.bot.guilds:
-            guild = self.bot.guilds[0]
-
-        # Überprüfen Sie alle Mitglieder beim Start des Bots
-        for guild in self.bot.guilds:
-            for member in guild.members:
-                if not await self.is_member_in_user_table(member.id):
-                    await self.check_member_update(member)
-                    await self.process_member_join(member)
-                else:
-
-                    cursor = await DatabaseConnectionManager.execute_sql_statement(self.bot.guilds[0].id, self.bot.guilds[0].name, "SELECT LEAVED FROM USER WHERE DISCORDID = ?", (str(member.id),))
-                    leaved_status = (await cursor.fetchone())
-                    if leaved_status and leaved_status[0] == 1:
-                        await self.check_member_update(member)
-                        await self.process_member_join(member)
-        
-        self.logger.info("Join Cog is ready.")	
 
     @exception_handler
     async def _random_anime_gif(self, inter: disnake.ApplicationCommandInteraction):
@@ -210,10 +204,14 @@ class Join(commands.Cog):
     @exception_handler
     @commands.Cog.listener()
     async def on_member_update(self, before: disnake.Member, after: disnake.Member):
+        underage_role = self.rolemanager.get_role(after.guild.id, int(os.getenv("UNDERAGE_ROLE_ID")))
         if before.pending and not after.pending:
             await self.check_member_update(after)
-        elif self.underage_role in after.roles:
-            await self.check_account_age_and_ban(after)
+        elif underage_role in after.roles:
+            # Ban the user for 3 months
+            duration = "90d"  # 3 months
+            reason = "User ist unter 18 Jahre alt. Automatischer Bann."
+            await self._ban_user(after, duration, reason)
         else:
             # Ersetze dies durch die tatsächliche ID der "Server Booster"-Rolle  # Ersetze dies durch die tatsächliche ID der "Zweiter Account"-Rolle
             booster_role_id = 1062833612485054504
@@ -222,6 +220,45 @@ class Join(commands.Cog):
 
             if disnake.utils.get(after.roles, id=booster_role_id) and not disnake.utils.get(before.roles, id=booster_role_id):
                 await self.send_booster_thank_you_message(after)
+
+    @exception_handler
+    async def _ban_user(self, member: disnake.Member, duration: str, reason: str):
+        try:
+            # Berechnen der Banndauer
+            duration_seconds = await self.globalfile.convert_duration_to_seconds(duration)
+            ban_end_time = (await self.globalfile.get_current_time()) + timedelta(seconds=duration_seconds)
+            ban_end_formatted = ban_end_time.strftime('%Y-%m-%d %H:%M:%S')
+
+            # Sende dem Benutzer ein Embed mit den Bann-Details
+            embed = disnake.Embed(
+                title="Du wurdest gebannt", description="Du wurdest von diesem Server gebannt.", color=disnake.Color.red())
+            embed.add_field(name="Grund", value=reason, inline=False)
+            embed.add_field(name="Dauer", value=duration, inline=True)
+            embed.add_field(name="Ende des Banns", value=ban_end_formatted, inline=True)
+
+            try:
+                await member.send(embed=embed)
+            except disnake.Forbidden:
+                self.logger.warning(f"Could not send ban details to {member.id}. User has DMs disabled.")
+
+            await member.ban(reason=reason)
+            self.logger.info(f"User {member.name} (ID: {member.id}) banned for {duration} due to {reason}")
+
+            # Speichere den Ban in der Datenbank
+            current_datetime = (await self.globalfile.get_current_time()).strftime('%Y-%m-%d %H:%M:%S')
+            await DatabaseConnectionManager.execute_sql_statement(member.guild.id, member.guild.name, "INSERT INTO BAN (USERID, REASON, BANNED_TO, DELETED_DAYS, INSERT_DATE) VALUES (?, ?, ?, ?, ?)", (member.id, reason, ban_end_formatted, 0, current_datetime))
+
+            # Log the ban in the moderation channel
+            mod_channel : disnake.TextChannel = self.channelmanager.get_channel(member.guild.id, int(os.getenv("MOD_CHANNEL_ID")))
+            embed = disnake.Embed(
+                title="Benutzer gebannt", description=f"{member.mention} wurde erfolgreich gebannt!", color=disnake.Color.red())
+            embed.set_author(name=member.name, icon_url=member.avatar.url if member.avatar else member.default_avatar.url)
+            embed.add_field(name="Grund", value=reason, inline=False)
+            embed.add_field(name="Dauer", value=duration, inline=True)
+            embed.add_field(name="Ende des Banns", value=ban_end_formatted, inline=True)
+            await mod_channel.send(embed=embed)
+        except Exception as e:
+            self.logger.error(f"Fehler beim Bannen des Benutzers: {e}")                
 
     @exception_handler
     async def check_member_update(self, member: disnake.Member):
@@ -287,7 +324,8 @@ class Join(commands.Cog):
 
             mod_channel = guild.get_channel(854698447113027594)
             guild.fetch_members()
-            await channel.send(f"||{member.mention}{self.new_member_ping.mention}||", embed=embed)
+            new_member_ping = self.rolemanager.get_role(member.guild.id, int(os.getenv("NEW_MEMBER_PING_ROLE_ID")))
+            await channel.send(f"||{member.mention}{new_member_ping.mention}||", embed=embed)
             await mod_channel.send(embed=mod_embed, view=view)
 
             embed = disnake.Embed(
@@ -371,7 +409,7 @@ class Join(commands.Cog):
                 'introduction': 'friends'
             }
             
-            # Insert missing default settings into the databas                
+            # Insert missing default settings into the database                
             for key, value in default_settings.items():
                 if key not in settings:
                     settings[key] = value
@@ -390,6 +428,34 @@ class Join(commands.Cog):
             )
             self.logger.info(
                 f"Benutzer {member.name} (ID: {member.id}) existiert bereits in der USER-Tabelle.")
+
+        # Check if the user has a pending ban in BAN_WAIT
+        cursor = await DatabaseConnectionManager.execute_sql_statement(member.guild.id, member.guild.name, "SELECT * FROM BAN_WAIT WHERE USERID = ?", (str(member.id),))
+        ban_wait_record = await cursor.fetchone()
+        if ban_wait_record:
+            reason = ban_wait_record[2]
+            ban_end_formatted = ban_wait_record[3]
+            delete_days = ban_wait_record[4]
+            image_path = ban_wait_record[5]
+            banned_by = ban_wait_record[7]
+
+            await self.moderation._ban(
+                inter=None,  # Assuming you have a way to pass the interaction context
+                member=member,
+                reason=reason,
+                duration=ban_end_formatted,
+                delete_days=delete_days,
+                proof=None,  # Assuming you have a way to pass the proof
+                username=member.name,
+                discordid=member.id
+            )
+
+            self.logger.info(f"User {member.name} (ID: {member.id}) banned upon joining due to pending ban in BAN_WAIT table.")
+
+            # Remove the entry from BAN_WAIT table
+            await DatabaseConnectionManager.execute_sql_statement(member.guild.id, member.guild.name, "DELETE FROM BAN_WAIT WHERE USERID = ?", (str(member.id),))
+
+            return
 
         invites_after_join = await member.guild.invites()
         for invite in invites_after_join:
@@ -436,7 +502,7 @@ class Join(commands.Cog):
             invite.code: invite for invite in invites_after_join}
         tmp = await self.check_account_age_and_ban(member)
         if tmp == False:
-            await self.update_stats()
+            await self.update_stats()         
 
     @exception_handler
     @commands.Cog.listener()
@@ -602,10 +668,10 @@ class Join(commands.Cog):
             await DatabaseConnectionManager.execute_sql_statement(member.guild.id, member.guild.name, "UPDATE USER SET LEAVED = 1, LEAVED_DATE = ? WHERE DISCORDID = ?", (current_date,str(member.id)))
 
             user_record = await self.globalfile.get_user_record(guild=member.guild, discordid=member.id)
-            await self.globalfile.delete_user_data(user_record['ID'], member.guild, member.guild)
+            await self.globalfile.delete_user_data(user_record['ID'], member.guild)
+            await self.update_stats()
         except Exception as e:
             self.logger.critical(f"Fehler aufgetreten [on_member_remove]: {e}")
-
 
 class CopyMentionButton(disnake.ui.Button):
     def __init__(self):
@@ -635,5 +701,5 @@ class CopyMentionButton(disnake.ui.Button):
                 )
 
 
-def setupJoin(bot: commands.Bot, rolemanager: RoleManager):
-    bot.add_cog(Join(bot, rolemanager))
+def setupJoin(bot: commands.Bot, rolemanager: RoleManager, channelmanager: ChannelManager):
+    bot.add_cog(Join(bot, rolemanager, channelmanager))
